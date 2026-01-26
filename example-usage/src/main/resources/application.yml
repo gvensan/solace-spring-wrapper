@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: solace-example
+
+# Solace configuration
+solace:
+  host: tcp://localhost:55554
+  msg-vpn: default
+  client-username: default
+  client-password: default
+  client-name: ${spring.application.name}
+
+  # Connection settings
+  connect-timeout-in-millis: 30000
+  reconnect-retries: true
+  reconnection-attempts: 3
+
+  # Message settings
+  generate-send-timestamps: true
+  generate-receive-timestamps: true
+
+# Logging
+logging:
+  level:
+    com.solace.wrapper: DEBUG
+    com.example.myapp: DEBUG
+    com.solacesystems: WARN

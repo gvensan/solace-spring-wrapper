@@ -1,0 +1,33 @@
+# Default Solace configuration
+solace:
+  host: localhost:55554
+  msg-vpn: default
+  client-username: default
+  client-password: ""
+  client-name: solace-spring-wrapper
+  reconnect-retries: true
+  reconnect-retries-wait-in-millis: 3000
+  connect-timeout-in-millis: 30000
+  read-timeout-in-millis: 30000
+  keep-alive-interval-in-millis: 3000
+  generate-send-timestamps: false
+  generate-receive-timestamps: false
+  generate-sequence-numbers: false
+  
+  # Connection pooling configuration
+  pool:
+    max-size: 10
+    min-idle: 2
+    max-wait-millis: 30000
+    test-on-borrow: true
+    test-on-return: false
+    test-while-idle: true
+
+# Logging configuration
+logging:
+  level:
+    com.solace.wrapper: INFO
+    com.solacesystems: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
