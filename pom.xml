@@ -11,7 +11,7 @@
     <packaging>jar</packaging>
 
     <name>Solace Java API Spring Wrapper</name>
-    <description>Spring Boot integration for Solace PubSub+ with annotation-driven publishing and consuming</description>
+    <description>Spring Boot integration for Solace with annotation-driven publishing and consuming</description>
 
     <properties>
         <maven.compiler.source>18</maven.compiler.source>

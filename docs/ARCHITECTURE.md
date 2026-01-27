@@ -45,7 +45,7 @@ This document describes the high-level architecture of the Solace Java API Sprin
                                      ▼
                     ┌─────────────────────────────┐
                     │      Solace Broker          │
-                    │   (PubSub+ Event Broker)    │
+                    │     (Event Broker)          │
                     └─────────────────────────────┘
 ```
 

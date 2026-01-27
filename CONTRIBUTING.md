@@ -50,7 +50,7 @@ Enhancement suggestions are welcome! Please include:
 
 - JDK 18 or later
 - Maven 3.6+
-- Access to a Solace PubSub+ broker (local or cloud) for integration tests
+- Access to a Solace broker (local or cloud) for integration tests
 
 ### Building the Project
 

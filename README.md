@@ -260,7 +260,7 @@ Note: `stopConsumer(...)` stops without unregistering; `removeConsumer(...)` shu
 
 ### Run locally
 - Configure broker settings in `src/test/resources/test-broker.properties` (or your app `application.yml`).
-- Start your broker (e.g., local PubSub+ on `tcp://localhost:55554`).
+- Start your broker (e.g., local broker on `tcp://localhost:55554`).
 - Run a demo app:
   - Annotation demo: enable the `CommandLineRunner` in `example-usage/AnnotationDemoApplication.java` and run the Spring Boot app.
   - Programmatic demo: see `example-usage/ExampleService.java` for setup/usage patterns.

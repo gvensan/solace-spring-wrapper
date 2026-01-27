@@ -453,7 +453,7 @@ curl http://localhost:8080/actuator/health/solace
 
 ### Solace Broker Tools
 
-Use Solace CLI or PubSub+ Manager to:
+Use Solace CLI or Solace Broker Manager to:
 - Check queue depth and bindings
 - View client connections
 - Monitor message rates

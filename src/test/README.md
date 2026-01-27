@@ -138,7 +138,7 @@ mvn verify -P integration -Dtest=LocalBrokerIntegrationTest
 ### Quick Start with Docker
 
 ```bash
-# Start Solace PubSub+ Standard (free)
+# Start Solace Standard broker (free)
 docker run -d -p 55555:55555 -p 8080:8080 \
   --name solace \
   solace/solace-pubsub-standard:latest

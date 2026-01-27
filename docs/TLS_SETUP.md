@@ -1,6 +1,6 @@
 # TLS/mTLS Setup Guide
 
-This guide covers how to configure TLS (Transport Layer Security) and mTLS (mutual TLS) for secure connections to Solace PubSub+ brokers.
+This guide covers how to configure TLS (Transport Layer Security) and mTLS (mutual TLS) for secure connections to Solace brokers.
 
 ## Overview
 

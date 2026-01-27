@@ -72,7 +72,7 @@ public class SolaceConnectionManager {
      * Creates a new MessagingService with configured properties.
      *
      * Notes on API compatibility:
-     * - This component targets Solace PubSub+ Java API version >= 1.8.x.
+     * - This component targets Solace Java API version >= 1.8.x.
      * - Optional transport properties like CONNECT_TIMEOUT_IN_MS, READ_TIMEOUT_IN_MS,
      *   and KEEP_ALIVE_INTERVAL_IN_MS are applied when available in the runtime library.
      *   If a particular version ignores them, behavior remains functional, and we log at DEBUG.
