@@ -193,6 +193,69 @@ class SolaceConsumerOnMessageTest {
         assertThat(c.getDescription()).contains("DIRECT").contains("t/>");
     }
 
+    private SolaceConsumer<String> persistentManual(String queue, String[] topics,
+                                                    SolaceManualAckMessageHandler<String> handler) {
+        SolaceConsumer<String> c = new SolaceConsumer<>(
+                "cm", queue, topics, SolaceConsumer.MessagingMode.PERSISTENT, true,
+                SolaceConsumer.AckMode.MANUAL, String.class, handler, cm, serializer);
+        c.start();
+        return c;
+    }
+
+    @Test
+    void manual_handler_doing_nothing_neither_acks_nor_settles() {
+        // Handler returns without ack()/fail(): processed=true, status NONE -> warn, no settle.
+        SolaceConsumer<String> c = persistentManual("q.noop", new String[0], (msg, in, ack) -> { });
+
+        c.onMessage(inbound());
+
+        assertThat(CURRENT.ackCount.get()).isZero();
+        assertThat(CURRENT.settleCount.get()).isZero();
+    }
+
+    @Test
+    void manual_handler_explicit_ack_acknowledges() {
+        SolaceConsumer<String> c = persistentManual("q.ack", new String[0],
+                (msg, in, ack) -> ack.ack());
+
+        c.onMessage(inbound());
+
+        assertThat(CURRENT.ackCount.get()).isEqualTo(1);
+        assertThat(CURRENT.settleCount.get()).isZero();
+    }
+
+    @Test
+    void manual_handler_explicit_fail_settles() {
+        SolaceConsumer<String> c = persistentManual("q.fail", new String[0],
+                (msg, in, ack) -> ack.fail());
+
+        c.onMessage(inbound());
+
+        assertThat(CURRENT.settleCount.get()).isEqualTo(1);
+        assertThat(CURRENT.ackCount.get()).isZero();
+    }
+
+    @Test
+    void manual_handler_throwing_after_ack_is_treated_as_processed() {
+        // Handler acks then throws: the completed ack must win and no settle occurs.
+        SolaceConsumer<String> c = persistentManual("q.ackthrow", new String[0],
+                (msg, in, ack) -> { ack.ack(); throw new RuntimeException("after-ack"); });
+
+        c.onMessage(inbound());
+
+        assertThat(CURRENT.ackCount.get()).isEqualTo(1);
+        assertThat(CURRENT.settleCount.get()).isZero();
+    }
+
+    @Test
+    void persistent_consumer_with_topic_subscriptions_starts() {
+        SolaceConsumer<String> c = persistentManual("q.subs", new String[]{"t/a", "t/b"},
+                (msg, in, ack) -> ack.ack());
+        assertThat(c.isRunning()).isTrue();
+        assertThat(c.getTopics()).containsExactly("t/a", "t/b");
+        assertThat(c.getDescription()).contains("queue=q.subs");
+    }
+
     @Test
     void termination_callbacks_mark_not_running() {
         SolaceConsumer<String> persistent = persistentAuto((msg, in) -> { });
