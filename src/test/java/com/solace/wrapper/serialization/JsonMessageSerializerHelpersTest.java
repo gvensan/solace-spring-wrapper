@@ -104,4 +104,55 @@ class JsonMessageSerializerHelpersTest {
         assertThat(new JsonMessageSerializer(ser.getObjectMapper()).getObjectMapper())
                 .isSameAs(ser.getObjectMapper());
     }
+
+    @Test
+    void serializeWithProperties_builds_payload() {
+        com.solace.messaging.MessagingService svc = messagingServiceCapturing();
+        ser.serializeWithProperties(svc, java.util.Map.of("k", 1), java.util.Map.of("h", "v"));
+        assertThat(lastBuilt).isEqualTo("{\"k\":1}".getBytes(StandardCharsets.UTF_8));
+
+        // String payloads pass through unchanged.
+        ser.serializeWithProperties(svc, "raw", java.util.Map.of());
+        assertThat(lastBuilt).isEqualTo("raw".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void serializeBytes_builds_exact_payload() {
+        com.solace.messaging.MessagingService svc = messagingServiceCapturing();
+        byte[] data = {1, 2, 3};
+        ser.serializeBytes(svc, data, "application/octet-stream");
+        assertThat(lastBuilt).isEqualTo(data);
+    }
+
+    @Test
+    void serialize_wraps_builder_failure_in_runtime_exception() {
+        // A null MessagingService triggers an NPE inside serialize(), which is wrapped as RuntimeException.
+        assertThatThrownBy(() -> ser.serialize(null, java.util.Map.of("k", 1), null))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> ser.serializeWithProperties(null, java.util.Map.of("k", 1), java.util.Map.of()))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    private byte[] lastBuilt;
+
+    /** A MessagingService whose messageBuilder().build(byte[]) captures the payload. */
+    private com.solace.messaging.MessagingService messagingServiceCapturing() {
+        return (com.solace.messaging.MessagingService) Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class[]{com.solace.messaging.MessagingService.class}, (p, m, a) -> {
+                    if ("messageBuilder".equals(m.getName())) {
+                        return Proxy.newProxyInstance(getClass().getClassLoader(),
+                                new Class[]{com.solace.messaging.publisher.OutboundMessageBuilder.class}, (bp, bm, ba) -> {
+                                    if ("build".equals(bm.getName())) {
+                                        lastBuilt = (byte[]) ba[0];
+                                        return Proxy.newProxyInstance(getClass().getClassLoader(),
+                                                new Class[]{com.solace.messaging.publisher.OutboundMessage.class},
+                                                (mp, mm, maa) -> null);
+                                    }
+                                    return bp;
+                                });
+                    }
+                    return null;
+                });
+    }
 }
