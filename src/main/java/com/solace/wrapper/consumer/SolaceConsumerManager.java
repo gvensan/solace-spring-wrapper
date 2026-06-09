@@ -2,6 +2,7 @@ package com.solace.wrapper.consumer;
 
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.exception.SolaceConsumerException;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,11 +25,31 @@ public class SolaceConsumerManager {
     private final MessageSerializer messageSerializer;
     private final Map<String, SolaceConsumer<?>> consumers = new ConcurrentHashMap<>();
     private final AtomicInteger consumerCounter = new AtomicInteger(0);
+    /** Optional metrics facade; never null (defaults to a disabled no-op). Propagated to consumers. */
+    private volatile SolaceMetrics metrics = new SolaceMetrics(null);
 
     public SolaceConsumerManager(SolaceConnectionManager connectionManager,
                                 MessageSerializer messageSerializer) {
         this.connectionManager = connectionManager;
         this.messageSerializer = messageSerializer;
+    }
+
+    /**
+     * Injects the metrics facade. Optional: when not set, consume metrics are silently skipped.
+     * Applied to every consumer created by this manager. Wired by {@code SolaceAutoConfiguration}
+     * when a {@link SolaceMetrics} bean is available.
+     *
+     * @param metrics the metrics facade; ignored if {@code null}
+     */
+    public void setMetrics(SolaceMetrics metrics) {
+        if (metrics != null) {
+            this.metrics = metrics;
+        }
+    }
+
+    /** @return the metrics facade in use (never {@code null}). */
+    public SolaceMetrics getMetrics() {
+        return metrics;
     }
 
     /**
@@ -68,10 +89,11 @@ public class SolaceConsumerManager {
                 consumerId, queueName, messageType, messageHandler,
                 connectionManager, messageSerializer
             );
-            
+            consumer.withMetrics(metrics);
+
             consumers.put(consumerId, consumer);
             consumer.start();
-            
+
             logger.info("Created and started consumer {} for queue: {}", consumerId, queueName);
             return consumerId;
             
@@ -106,11 +128,12 @@ public class SolaceConsumerManager {
                 consumerId, queueName, messageType, messageHandler,
                 connectionManager, messageSerializer
             );
-            
+            consumer.withMetrics(metrics);
+
             consumers.put(consumerId, consumer);
             consumer.start();
-            
-            logger.info("Created and started raw consumer {} for queue: {} with message type: {}", 
+
+            logger.info("Created and started raw consumer {} for queue: {} with message type: {}",
                        consumerId, queueName, messageType.getSimpleName());
             return consumerId;
             
@@ -237,6 +260,7 @@ public class SolaceConsumerManager {
             consumer.withLocalBackoff(localMaxAttempts, localBackoffInitialMs, localBackoffMultiplier, localBackoffMaxMs);
             // Apply termination timeout from properties
             consumer.withTerminationTimeout(connectionManager.getProperties().getTerminationTimeoutMs());
+            consumer.withMetrics(metrics);
 
             consumers.put(consumerId, consumer);
             if (autoStart) {
@@ -307,6 +331,7 @@ public class SolaceConsumerManager {
             consumer.withLocalBackoff(localMaxAttempts, localBackoffInitialMs, localBackoffMultiplier, localBackoffMaxMs);
             // Apply termination timeout from properties
             consumer.withTerminationTimeout(connectionManager.getProperties().getTerminationTimeoutMs());
+            consumer.withMetrics(metrics);
 
             consumers.put(consumerId, consumer);
             if (autoStart) {

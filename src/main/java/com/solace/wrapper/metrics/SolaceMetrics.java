@@ -1,6 +1,7 @@
 package com.solace.wrapper.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
@@ -11,7 +12,9 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -46,6 +49,9 @@ public class SolaceMetrics {
     static final String CONSUME_COUNTER = "solace.consume.total";
     static final String CONSUME_TIMER = "solace.consume.latency";
     static final String CONSUME_RETRY_COUNTER = "solace.consume.retries.total";
+    static final String CONNECTION_GAUGE = "solace.connection.up";
+    static final String PUBLISHERS_GAUGE = "solace.publishers.active";
+    static final String CONSUMERS_GAUGE = "solace.consumers.active";
 
     private static final String UNKNOWN = "unknown";
 
@@ -55,6 +61,9 @@ public class SolaceMetrics {
     // Cache meters by their fully-resolved key to avoid repeated registry look-ups on the hot path.
     private final ConcurrentHashMap<String, Counter> counters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Timer> timers = new ConcurrentHashMap<>();
+    // Strong references to gauge state suppliers: Micrometer holds only a weak reference to the
+    // state object, so we must retain them ourselves to prevent the gauge reading NaN after GC.
+    private final List<Object> gaugeStateRefs = new CopyOnWriteArrayList<>();
 
     /**
      * Creates a metrics facade.
@@ -196,6 +205,49 @@ public class SolaceMetrics {
         }
         Tags tags = consumeTags(null, destination, consumerId);
         counter(CONSUME_RETRY_COUNTER, tags).increment();
+    }
+
+    // ---------------------------------------------------------------------
+    // Gauges
+    // ---------------------------------------------------------------------
+
+    /**
+     * Registers a polling gauge backed by the supplied function. The supplier is strongly
+     * referenced for the lifetime of this facade so the gauge does not read {@code NaN} after the
+     * caller's reference is garbage-collected. No-op when metrics are disabled.
+     *
+     * @param name meter name
+     * @param supplier value supplier, evaluated on each scrape; {@code null} values report {@code NaN}
+     */
+    public void registerGauge(String name, Supplier<Number> supplier) {
+        if (registry == null || supplier == null) {
+            return;
+        }
+        gaugeStateRefs.add(supplier);
+        Gauge.builder(name, supplier, s -> {
+            Number value = s.get();
+            return value == null ? Double.NaN : value.doubleValue();
+        }).register(registry);
+    }
+
+    /**
+     * Registers the {@code solace.connection.up} gauge: {@code 1} when connected, {@code 0} otherwise.
+     */
+    public void registerConnectionStatusGauge(BooleanSupplier connected) {
+        if (connected == null) {
+            return;
+        }
+        registerGauge(CONNECTION_GAUGE, () -> connected.getAsBoolean() ? 1 : 0);
+    }
+
+    /** Registers the {@code solace.publishers.active} gauge. */
+    public void registerActivePublishersGauge(Supplier<Number> count) {
+        registerGauge(PUBLISHERS_GAUGE, count);
+    }
+
+    /** Registers the {@code solace.consumers.active} gauge. */
+    public void registerActiveConsumersGauge(Supplier<Number> count) {
+        registerGauge(CONSUMERS_GAUGE, count);
     }
 
     // ---------------------------------------------------------------------

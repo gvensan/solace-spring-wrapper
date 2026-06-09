@@ -87,6 +87,16 @@ public class SolacePublisher {
         }
     }
 
+    /**
+     * Returns the number of active underlying publisher instances (direct + persistent) currently
+     * held by this service. Used to back the {@code solace.publishers.active} gauge.
+     *
+     * @return count of live direct and persistent publishers
+     */
+    public int getActivePublisherCount() {
+        return directPublishers.size() + persistentPublishers.size();
+    }
+
     @PostConstruct
     public void init() {
         ensurePublisher();
@@ -454,11 +464,40 @@ public class SolacePublisher {
             }
             success = true;
         } catch (Exception e) {
+            if (isBackpressureRejection(e)) {
+                metrics.recordPublishRejected(deliveryMode, topicName, clientName);
+            }
             logger.error("Failed to publish message to topic: {}", topicName, e);
             throw new SolacePublishException("Failed to publish message to topic: " + topicName, e);
         } finally {
             metrics.recordPublishLatency(success, deliveryMode, topicName, clientName, System.nanoTime() - start);
         }
+    }
+
+    /**
+     * Heuristically determines whether a publish failure was caused by publisher backpressure
+     * (buffer full under the REJECT strategy). Matched by exception type/message in a
+     * version-tolerant way, since the precise Solace exception class varies across API versions.
+     *
+     * @param t the failure (its cause chain is inspected)
+     * @return {@code true} if the failure looks like a backpressure rejection / buffer overflow
+     */
+    private boolean isBackpressureRejection(Throwable t) {
+        for (Throwable cause = t; cause != null && cause != cause.getCause(); cause = cause.getCause()) {
+            String type = cause.getClass().getSimpleName();
+            if (type.contains("Overflow") || type.contains("BackPressure") || type.contains("Backpressure")) {
+                return true;
+            }
+            String msg = cause.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("backpressure") || lower.contains("buffer is full")
+                        || lower.contains("would block") || lower.contains("publisher is full")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

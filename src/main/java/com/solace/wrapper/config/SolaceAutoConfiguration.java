@@ -46,7 +46,67 @@ public class SolaceAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public SolaceConsumerManager solaceConsumerManager(SolaceConnectionManager connectionManager,
-                                                      MessageSerializer messageSerializer) {
-        return new SolaceConsumerManager(connectionManager, messageSerializer);
+                                                      MessageSerializer messageSerializer,
+                                                      ObjectProvider<SolaceMetrics> metricsProvider) {
+        SolaceConsumerManager manager = new SolaceConsumerManager(connectionManager, messageSerializer);
+        manager.setMetrics(metricsProvider.getIfAvailable());
+        return manager;
+    }
+
+    /**
+     * Binds connection-status and active-publisher/consumer gauges to the metrics registry once all
+     * singletons are constructed. Uses lazy {@link ObjectProvider} suppliers evaluated at scrape time
+     * to avoid bean initialization ordering issues. No-op when no {@link SolaceMetrics} bean exists.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public SolaceMetricsGaugeBinder solaceMetricsGaugeBinder(
+            ObjectProvider<SolaceMetrics> metricsProvider,
+            ObjectProvider<SolaceConnectionManager> connectionManagerProvider,
+            ObjectProvider<SolacePublisher> publisherProvider,
+            ObjectProvider<SolaceConsumerManager> consumerManagerProvider) {
+        return new SolaceMetricsGaugeBinder(metricsProvider, connectionManagerProvider,
+                publisherProvider, consumerManagerProvider);
+    }
+
+    /**
+     * Registers Solace gauges after the application context has finished creating singletons.
+     */
+    static class SolaceMetricsGaugeBinder implements org.springframework.beans.factory.SmartInitializingSingleton {
+
+        private final ObjectProvider<SolaceMetrics> metricsProvider;
+        private final ObjectProvider<SolaceConnectionManager> connectionManagerProvider;
+        private final ObjectProvider<SolacePublisher> publisherProvider;
+        private final ObjectProvider<SolaceConsumerManager> consumerManagerProvider;
+
+        SolaceMetricsGaugeBinder(ObjectProvider<SolaceMetrics> metricsProvider,
+                                 ObjectProvider<SolaceConnectionManager> connectionManagerProvider,
+                                 ObjectProvider<SolacePublisher> publisherProvider,
+                                 ObjectProvider<SolaceConsumerManager> consumerManagerProvider) {
+            this.metricsProvider = metricsProvider;
+            this.connectionManagerProvider = connectionManagerProvider;
+            this.publisherProvider = publisherProvider;
+            this.consumerManagerProvider = consumerManagerProvider;
+        }
+
+        @Override
+        public void afterSingletonsInstantiated() {
+            SolaceMetrics metrics = metricsProvider.getIfAvailable();
+            if (metrics == null || !metrics.isEnabled()) {
+                return;
+            }
+            metrics.registerConnectionStatusGauge(() -> {
+                SolaceConnectionManager cm = connectionManagerProvider.getIfAvailable();
+                return cm != null && cm.isConnected();
+            });
+            metrics.registerActivePublishersGauge(() -> {
+                SolacePublisher publisher = publisherProvider.getIfAvailable();
+                return publisher != null ? publisher.getActivePublisherCount() : 0;
+            });
+            metrics.registerActiveConsumersGauge(() -> {
+                SolaceConsumerManager manager = consumerManagerProvider.getIfAvailable();
+                return manager != null ? manager.getActiveConsumerCount() : 0;
+            });
+        }
     }
 }

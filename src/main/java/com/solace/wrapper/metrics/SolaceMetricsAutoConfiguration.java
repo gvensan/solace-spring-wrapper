@@ -2,6 +2,7 @@ package com.solace.wrapper.metrics;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,6 +23,13 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnClass(MeterRegistry.class)
 @ConditionalOnProperty(prefix = "solace.metrics", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(SolaceMetricsProperties.class)
+// Run after Spring Boot's metrics auto-configuration so that, when present, its MeterRegistry is
+// reused and our fallback SimpleMeterRegistry only activates in non-Boot/sliced contexts.
+// Name-based to avoid a hard dependency when actuator metrics auto-config is absent.
+@AutoConfigureAfter(name = {
+        "org.springframework.boot.actuate.autoconfigure.metrics.MetricsAutoConfiguration",
+        "org.springframework.boot.actuate.autoconfigure.metrics.export.simple.SimpleMetricsExportAutoConfiguration"
+})
 public class SolaceMetricsAutoConfiguration {
 
     /**

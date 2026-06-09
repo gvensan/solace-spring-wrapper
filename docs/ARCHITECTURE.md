@@ -120,6 +120,16 @@ This document describes the high-level architecture of the Solace Java API Sprin
 - Default implementation: `JsonMessageSerializer` (Jackson)
 - Custom implementations can be provided as Spring beans
 
+### 6. Observability Layer
+
+#### SolaceMetrics
+- Central, null-safe Micrometer facade injected into the publisher and consumers via optional setters
+- Emits publish/consume counters and latency timers, backpressure-rejection and retry counters, and
+  connection/active-endpoint gauges
+- Auto-configured by `SolaceMetricsAutoConfiguration` (provides a fallback `SimpleMeterRegistry` when
+  none exists) and gated by `solace.metrics.enabled`
+- Meters are exposed through Spring Boot Actuator / Prometheus. See [METRICS.md](METRICS.md).
+
 ## Data Flow
 
 ### Publishing Flow

@@ -236,7 +236,6 @@
                     <additionalJOptions>
                         <additionalJOption>-Xdoclint:none</additionalJOption>
                     </additionalJOptions>
-                    <showWarnings>false</showWarnings>
                     <failOnWarnings>false</failOnWarnings>
                 </configuration>
                 <executions>

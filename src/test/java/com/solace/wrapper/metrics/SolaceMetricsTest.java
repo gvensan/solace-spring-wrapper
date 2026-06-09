@@ -107,4 +107,53 @@ class SolaceMetricsTest {
                 .counter().count();
         assertEquals(2.0, retries, 0.0001);
     }
+
+    @Test
+    void recordsBackpressureRejections() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordPublishRejected("DIRECT", "topic/a", "pub-1");
+
+        Counter counter = registry.find(SolaceMetrics.PUBLISH_REJECTED_COUNTER)
+                .tag("deliveryMode", "DIRECT")
+                .counter();
+        assertNotNull(counter);
+        assertEquals(1.0, counter.count(), 0.0001);
+    }
+
+    @Test
+    void registersConnectionAndCountGauges() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        java.util.concurrent.atomic.AtomicBoolean connected = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicInteger publishers = new java.util.concurrent.atomic.AtomicInteger(2);
+        java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger(3);
+
+        metrics.registerConnectionStatusGauge(connected::get);
+        metrics.registerActivePublishersGauge(publishers::get);
+        metrics.registerActiveConsumersGauge(consumers::get);
+
+        assertEquals(1.0, registry.get(SolaceMetrics.CONNECTION_GAUGE).gauge().value(), 0.0001);
+        assertEquals(2.0, registry.get(SolaceMetrics.PUBLISHERS_GAUGE).gauge().value(), 0.0001);
+        assertEquals(3.0, registry.get(SolaceMetrics.CONSUMERS_GAUGE).gauge().value(), 0.0001);
+
+        // Gauges re-poll their supplier on read, so state changes are reflected live.
+        connected.set(false);
+        publishers.set(5);
+        assertEquals(0.0, registry.get(SolaceMetrics.CONNECTION_GAUGE).gauge().value(), 0.0001);
+        assertEquals(5.0, registry.get(SolaceMetrics.PUBLISHERS_GAUGE).gauge().value(), 0.0001);
+    }
+
+    @Test
+    void gaugeRegistrationIsNoopWithoutRegistry() {
+        SolaceMetrics metrics = new SolaceMetrics(null);
+        // Must not throw even though there is no registry.
+        metrics.registerConnectionStatusGauge(() -> true);
+        metrics.registerActivePublishersGauge(() -> 1);
+        metrics.registerActiveConsumersGauge(() -> 1);
+        metrics.registerGauge("solace.test", () -> 1);
+        assertFalse(metrics.isEnabled());
+    }
 }
