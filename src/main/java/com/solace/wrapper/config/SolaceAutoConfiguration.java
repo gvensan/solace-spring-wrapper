@@ -3,8 +3,10 @@ package com.solace.wrapper.config;
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.publisher.SolacePublisher;
 import com.solace.wrapper.consumer.SolaceConsumerManager;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import com.solace.wrapper.serialization.JsonMessageSerializer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -33,9 +35,12 @@ public class SolaceAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public SolacePublisher solacePublisher(SolaceConnectionManager connectionManager, 
-                                         MessageSerializer messageSerializer) {
-        return new SolacePublisher(connectionManager, messageSerializer);
+    public SolacePublisher solacePublisher(SolaceConnectionManager connectionManager,
+                                         MessageSerializer messageSerializer,
+                                         ObjectProvider<SolaceMetrics> metricsProvider) {
+        SolacePublisher publisher = new SolacePublisher(connectionManager, messageSerializer);
+        publisher.setMetrics(metricsProvider.getIfAvailable());
+        return publisher;
     }
 
     @Bean

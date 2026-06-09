@@ -6,6 +6,7 @@ import com.solace.messaging.DirectMessagePublisherBuilder;
 import com.solace.messaging.resources.Topic;
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.exception.SolacePublishException;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import com.solace.wrapper.config.SolaceProperties;
 import org.slf4j.Logger;
@@ -37,6 +38,8 @@ public class SolacePublisher {
     private final SolaceConnectionManager connectionManager;
     private final MessageSerializer messageSerializer;
     private final TaskExecutor taskExecutor;
+    /** Optional metrics facade; never null (defaults to a disabled no-op). */
+    private volatile SolaceMetrics metrics = new SolaceMetrics(null);
     private final Map<String, DirectMessagePublisher> directPublishers = new ConcurrentHashMap<>();
     private final Map<String, PersistentMessagePublisher> persistentPublishers = new ConcurrentHashMap<>();
     private final Map<String, Boolean> persistentReceiptsSupported = new ConcurrentHashMap<>();
@@ -70,6 +73,18 @@ public class SolacePublisher {
         this.pendingConfirmTimeoutMs = props.getPendingConfirmTimeoutMs();
         // Configure termination timeout from properties
         this.terminationTimeoutMs = props.getTerminationTimeoutMs();
+    }
+
+    /**
+     * Injects the metrics facade. Optional: when not set, publishing metrics are silently
+     * skipped. Wired by {@code SolaceAutoConfiguration} when a {@link SolaceMetrics} bean exists.
+     *
+     * @param metrics the metrics facade; ignored if {@code null}
+     */
+    public void setMetrics(SolaceMetrics metrics) {
+        if (metrics != null) {
+            this.metrics = metrics;
+        }
     }
 
     @PostConstruct
@@ -422,6 +437,9 @@ public class SolacePublisher {
 
     private void publishInternal(String topicName, Object message, MessageProperties properties,
                                  boolean persistent, String clientName, String publisherKey) {
+        final String deliveryMode = persistent ? "PERSISTENT" : "DIRECT";
+        final long start = System.nanoTime();
+        boolean success = false;
         try {
             PublisherContext context = resolvePublisherContext(publisherKey, clientName);
             Topic topic = Topic.of(topicName);
@@ -434,9 +452,12 @@ public class SolacePublisher {
                 publishWithRetry(context, outboundMessage, topic);
                 logger.info("Message published to topic: {}", topicName);
             }
+            success = true;
         } catch (Exception e) {
             logger.error("Failed to publish message to topic: {}", topicName, e);
             throw new SolacePublishException("Failed to publish message to topic: " + topicName, e);
+        } finally {
+            metrics.recordPublishLatency(success, deliveryMode, topicName, clientName, System.nanoTime() - start);
         }
     }
 

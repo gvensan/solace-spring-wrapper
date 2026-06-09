@@ -1,0 +1,110 @@
+package com.solace.wrapper.metrics;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Verifies that {@link SolaceMetrics} records meters with the documented names and tags, and that
+ * it degrades to a safe no-op when constructed without a registry.
+ */
+class SolaceMetricsTest {
+
+    @Test
+    void noopWhenRegistryIsNull() {
+        SolaceMetrics metrics = new SolaceMetrics(null);
+        assertFalse(metrics.isEnabled(), "metrics should be disabled without a registry");
+
+        // None of these should throw despite the absence of a registry.
+        metrics.recordPublish(true, "DIRECT", "topic/a", "client-1");
+        metrics.recordPublishLatency(false, "PERSISTENT", "topic/b", "client-1", 1_000_000L);
+        metrics.recordPublishRejected("DIRECT", "topic/c", "client-1");
+        metrics.recordConsume(true, "queue/a", "consumer-1");
+        metrics.recordConsumeLatency(false, "queue/a", "consumer-1", 2_000_000L);
+        metrics.recordConsumeRetry("queue/a", "consumer-1");
+
+        // The timing helpers must still execute the supplied action.
+        StringBuilder ran = new StringBuilder();
+        metrics.timePublish("DIRECT", "topic/a", "client-1", () -> ran.append("x"));
+        assertEquals("x", ran.toString());
+    }
+
+    @Test
+    void recordsPublishSuccessCounterAndTimer() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+        assertTrue(metrics.isEnabled());
+
+        metrics.recordPublishLatency(true, "DIRECT", "topic/orders", "pub-1", 5_000_000L);
+
+        Counter counter = registry.find(SolaceMetrics.PUBLISH_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS)
+                .tag("deliveryMode", "DIRECT")
+                .tag("destination", "topic/orders")
+                .tag("clientName", "pub-1")
+                .counter();
+        assertNotNull(counter, "publish counter should be registered with the expected tags");
+        assertEquals(1.0, counter.count(), 0.0001);
+
+        Timer timer = registry.find(SolaceMetrics.PUBLISH_TIMER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS)
+                .timer();
+        assertNotNull(timer, "publish timer should be registered");
+        assertEquals(1L, timer.count());
+    }
+
+    @Test
+    void recordsPublishFailureSeparatelyFromSuccess() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordPublish(true, "PERSISTENT", "topic/x", "pub-1");
+        metrics.recordPublish(false, "PERSISTENT", "topic/x", "pub-1");
+        metrics.recordPublish(false, "PERSISTENT", "topic/x", "pub-1");
+
+        double failures = registry.find(SolaceMetrics.PUBLISH_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_FAILURE)
+                .counter().count();
+        double successes = registry.find(SolaceMetrics.PUBLISH_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS)
+                .counter().count();
+        assertEquals(2.0, failures, 0.0001);
+        assertEquals(1.0, successes, 0.0001);
+    }
+
+    @Test
+    void omitsDestinationTagWhenDisabled() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, false);
+
+        metrics.recordConsume(true, "queue/a", "consumer-1");
+
+        Counter counter = registry.find(SolaceMetrics.CONSUME_COUNTER)
+                .tag("consumerId", "consumer-1")
+                .counter();
+        assertNotNull(counter);
+        assertEquals(0, counter.getId().getTags().stream()
+                .filter(t -> t.getKey().equals("destination")).count(),
+                "destination tag should be omitted when includeDestinationTag=false");
+    }
+
+    @Test
+    void recordsConsumeRetries() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordConsumeRetry("queue/a", "consumer-1");
+        metrics.recordConsumeRetry("queue/a", "consumer-1");
+
+        double retries = registry.find(SolaceMetrics.CONSUME_RETRY_COUNTER)
+                .tag("consumerId", "consumer-1")
+                .counter().count();
+        assertEquals(2.0, retries, 0.0001);
+    }
+}
