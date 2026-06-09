@@ -152,6 +152,46 @@ class SolaceConsumerManagerLifecycleTest {
     }
 
     @Test
+    void enhanced_overloads_delegate_and_register() {
+        SolaceMessageHandler<Object> auto = (msg, in) -> { };
+        SolaceManualAckMessageHandler<Object> manual = (msg, in, ack) -> { };
+
+        // Backward-compatible overload without ackMode (defaults to AUTO).
+        manager.createEnhancedConsumerRaw("e1", "q.e1", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.PERSISTENT, true,
+                String.class, auto);
+
+        // Short overload with ackMode + auto-ack handler.
+        manager.createEnhancedConsumerRaw("e2", "q.e2", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.AUTO, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class, auto);
+
+        // Short overload with manual-ack handler (forces MANUAL).
+        manager.createEnhancedConsumerRaw("e3", "q.e3", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.PERSISTENT, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.MANUAL, String.class, manual);
+
+        // Overload with explicit local backoff parameters.
+        manager.createEnhancedConsumerRaw("e4", "q.e4", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.PERSISTENT, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class, auto,
+                2, 100, 2.0, 1000);
+
+        // Overload with clientName + local backoff.
+        manager.createEnhancedConsumerRaw("e5", "q.e5", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.PERSISTENT, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class, auto,
+                null, 2, 100, 2.0, 1000);
+
+        // Raw consumer (no generics) overload.
+        manager.createConsumerRaw("e6", "q.e6", String.class, auto);
+
+        assertThat(manager.getTotalConsumerCount()).isEqualTo(6);
+        assertThat(manager.getConsumerStatus("e3").getMessagingMode()).isEqualTo("PERSISTENT");
+        assertThat(manager.getConsumersByQueue("q.e4")).containsExactly("e4");
+    }
+
+    @Test
     void duplicate_consumer_id_is_rejected() {
         manager.createConsumer("dup", "q.x", String.class, (msg, in) -> { });
         assertThatThrownBy(() -> manager.createConsumer("dup", "q.y", String.class, (msg, in) -> { }))
