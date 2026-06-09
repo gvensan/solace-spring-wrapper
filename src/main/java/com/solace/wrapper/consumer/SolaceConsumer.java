@@ -9,6 +9,7 @@ import com.solace.messaging.resources.Queue;
 import com.solace.messaging.resources.TopicSubscription;
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.exception.SolaceConsumerException;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +46,8 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
     private long localBackoffMaxMs = 2000;
     // Configurable termination timeout (default 5 seconds)
     private long terminationTimeoutMs = 5000;
+    // Optional metrics facade; never null (defaults to a disabled no-op).
+    private volatile SolaceMetrics metrics = new SolaceMetrics(null);
 
     private volatile MessagingService messagingService;
     private volatile PersistentMessageReceiver persistentReceiver;
@@ -154,6 +157,31 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
     public SolaceConsumer<T> withTerminationTimeout(long timeoutMs) {
         this.terminationTimeoutMs = Math.max(100, timeoutMs);
         return this;
+    }
+
+    /**
+     * Injects the metrics facade. Optional: when not set, consume metrics are silently skipped.
+     * Wired by {@code SolaceConsumerManager} when a {@link SolaceMetrics} bean is available.
+     *
+     * @param metrics the metrics facade; ignored if {@code null}
+     * @return this consumer, for fluent configuration
+     */
+    public SolaceConsumer<T> withMetrics(SolaceMetrics metrics) {
+        if (metrics != null) {
+            this.metrics = metrics;
+        }
+        return this;
+    }
+
+    /**
+     * Resolves the metric destination tag value: the queue name for persistent consumers, or the
+     * comma-joined topic list for direct consumers.
+     */
+    private String metricDestination() {
+        if (queueName != null && !queueName.isEmpty()) {
+            return queueName;
+        }
+        return topics.length > 0 ? String.join(",", topics) : "unknown";
     }
 
     /**
@@ -383,6 +411,8 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
 
         SolaceAckContext ackContext = null;
         boolean useManualAckHandler = ackMode == AckMode.MANUAL && manualAckHandler != null;
+        final long startNanos = System.nanoTime();
+        boolean processed = false;
         try {
             // Deserialize once per attempt if immutable; otherwise re-deserialize per attempt
             // Here we deserialize once for efficiency.
@@ -390,10 +420,10 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
 
             if (useManualAckHandler) {
                 ackContext = createAckContext(inboundMessage);
-                boolean processed = processWithLocalBackoffManual(messageObject, inboundMessage, ackContext);
+                processed = processWithLocalBackoffManual(messageObject, inboundMessage, ackContext);
                 handleManualAckOutcome(processed, ackContext, inboundMessage);
             } else {
-                boolean processed = processWithLocalBackoff(messageObject, inboundMessage);
+                processed = processWithLocalBackoff(messageObject, inboundMessage);
                 handleAutoAckOutcome(processed, inboundMessage);
             }
 
@@ -424,6 +454,8 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
                 // Direct messages are lost on error (no acknowledgment mechanism)
                 logger.warn("Direct message lost due to processing error: {}", e.getMessage());
             }
+        } finally {
+            metrics.recordConsumeLatency(processed, metricDestination(), consumerId, System.nanoTime() - startNanos);
         }
     }
 
@@ -528,6 +560,7 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
             } catch (Exception ex) {
                 last = ex;
                 if (i < attempts - 1) {
+                    metrics.recordConsumeRetry(metricDestination(), consumerId);
                     long sleepMs = computeBackoffDelay(i);
                     logger.warn("Handler failed (attempt {}/{}). Backing off {} ms", i + 1, attempts, sleepMs, ex);
                     try { Thread.sleep(sleepMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
@@ -553,6 +586,7 @@ public class SolaceConsumer<T> implements MessageReceiver.MessageHandler {
                     return true;
                 }
                 if (i < attempts - 1) {
+                    metrics.recordConsumeRetry(metricDestination(), consumerId);
                     long sleepMs = computeBackoffDelay(i);
                     logger.warn("Handler failed (attempt {}/{}). Backing off {} ms", i + 1, attempts, sleepMs, ex);
                     try { Thread.sleep(sleepMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }

@@ -54,10 +54,23 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Spring Boot Actuator for HealthIndicator -->
+        <!-- Spring Boot Actuator for HealthIndicator and metrics endpoints -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Micrometer core for observability/metrics (also transitively via actuator) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
+        <!-- Micrometer Prometheus registry (optional) - enable by providing the bean / config -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <!-- Solace Java API -->
@@ -223,7 +236,6 @@
                     <additionalJOptions>
                         <additionalJOption>-Xdoclint:none</additionalJOption>
                     </additionalJOptions>
-                    <showWarnings>false</showWarnings>
                     <failOnWarnings>false</failOnWarnings>
                 </configuration>
                 <executions>
