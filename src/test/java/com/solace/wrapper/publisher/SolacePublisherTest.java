@@ -929,6 +929,52 @@ public class SolacePublisherTest {
     }
 
     @Test
+    void async_direct_publish_completes_exceptionally_on_double_failure() {
+        log.info("TEST: async_direct_publish_completes_exceptionally_on_double_failure");
+        env.directFailuresRemaining = 2; // initial + retry both fail
+        CompletableFuture<Void> fut = publisher.publishToTopicAsync("t/async-fail", "x");
+        assertThatThrownBy(fut::join)
+                .isInstanceOf(java.util.concurrent.CompletionException.class)
+                .hasCauseInstanceOf(SolacePublishException.class);
+    }
+
+    @Test
+    void async_persistent_with_properties_completes_exceptionally_on_double_failure() {
+        log.info("TEST: async_persistent_with_properties_completes_exceptionally_on_double_failure");
+        env.persistentFailuresRemaining = 2;
+        MessageProperties props = new MessageProperties().setCorrelationId("cid");
+        CompletableFuture<Void> fut =
+                publisher.publishPersistentToTopicWithPropertiesAsync("p/async-fail", "x", props);
+        assertThatThrownBy(fut::join)
+                .isInstanceOf(java.util.concurrent.CompletionException.class)
+                .hasCauseInstanceOf(SolacePublishException.class);
+    }
+
+    @Test
+    void await_confirm_throws_on_publish_failure() {
+        log.info("TEST: await_confirm_throws_on_publish_failure");
+        env.persistentFailuresRemaining = 2; // publish fails -> async confirm completes exceptionally
+        assertThatThrownBy(() ->
+                publisher.publishPersistentToTopicAwait("p/await-fail", "x", Duration.ofSeconds(2)))
+                .isInstanceOf(SolacePublishException.class);
+    }
+
+    @Test
+    void publish_with_context_uses_client_name_and_publisher_key() {
+        log.info("TEST: publish_with_context_uses_client_name_and_publisher_key");
+        // Exercises the contextual publish entrypoint used by the @SolacePublish aspect.
+        // (clientName left null so the shared primary service is reused in this harness.)
+        publisher.publishWithContext("t/ctx", "body", new MessageProperties().setPriority(1),
+                false, null, "pub-key");
+        assertThat(env.lastDirectTopic).isEqualTo("t/ctx");
+
+        CompletableFuture<Void> fut = publisher.publishWithContextAsync("p/ctx", "body", null,
+                true, null, "pub-key-2");
+        assertThat(fut).succeedsWithin(Duration.ofSeconds(1));
+        assertThat(env.lastPersistentTopic).isEqualTo("p/ctx");
+    }
+
+    @Test
     void publish_records_success_metrics() {
         log.info("TEST: publish_records_success_metrics - verifies publish counter + latency timer increment on success");
         io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =

@@ -235,7 +235,10 @@ public class SolaceConnectionManager {
 
             logger.info("Created new Solace messaging service with host: {}", wrapperProperties.getHost());
             return messagingService;
-            
+
+        } catch (SolaceConnectionException e) {
+            // Preserve specific configuration errors (e.g. missing host) instead of masking them.
+            throw e;
         } catch (Exception e) {
             logger.error("Failed to create Solace messaging service", e);
             throw new SolaceConnectionException("Failed to create messaging service", e);

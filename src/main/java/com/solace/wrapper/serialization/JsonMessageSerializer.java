@@ -160,50 +160,6 @@ public class JsonMessageSerializer implements MessageSerializer {
     }
 
     /**
-     * Creates an OutboundMessage with correlation ID.
-     * 
-     * @param messagingService The messaging service
-     * @param object The object to serialize
-     * @param correlationId The correlation ID to set
-     * @return The configured OutboundMessage
-     */
-    /*
-    public OutboundMessage serializeWithCorrelationId(MessagingService messagingService, Object object, 
-                                                     String correlationId) {
-        try {
-            String jsonString;
-            if (object instanceof String) {
-                jsonString = (String) object;
-            } else {
-                jsonString = objectMapper.writeValueAsString(object);
-            }
-            
-            OutboundMessageBuilder messageBuilder = messagingService.messageBuilder();
-            
-            // Set content type for JSON
-            messageBuilder.withProperty("content-type", "application/json");
-            
-            // Set correlation ID
-            if (correlationId != null && !correlationId.trim().isEmpty()) {
-                messageBuilder.withCorrelationId(correlationId);
-            }
-            
-            OutboundMessage message = messageBuilder.build(jsonString);
-            
-            logger.debug("Serialized object to JSON message with correlation ID {}: {}", correlationId, jsonString);
-            return message;
-            
-        } catch (JsonProcessingException e) {
-            logger.error("Failed to serialize object to JSON", e);
-            throw new RuntimeException("Failed to serialize object to JSON", e);
-        } catch (Exception e) {
-            logger.error("Failed to create outbound message with correlation ID", e);
-            throw new RuntimeException("Failed to create outbound message with correlation ID", e);
-        }
-    }
-    */
-
-    /**
      * Creates an OutboundMessage from byte array (for binary data).
      * 
      * @param messagingService The messaging service
