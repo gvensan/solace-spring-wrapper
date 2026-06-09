@@ -268,7 +268,10 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <executions>
+                            <!-- Distinct id so this execution coexists with broker-it's when both
+                                 profiles are active (-Pintegration,broker-it runs all suites). -->
                             <execution>
+                                <id>integration-tests</id>
                                 <goals>
                                     <goal>integration-test</goal>
                                     <goal>verify</goal>
@@ -295,7 +298,10 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <executions>
+                            <!-- Distinct id so this execution coexists with the integration
+                                 profile's when both are active (-Pintegration,broker-it). -->
                             <execution>
+                                <id>broker-it-tests</id>
                                 <goals>
                                     <goal>integration-test</goal>
                                     <goal>verify</goal>
