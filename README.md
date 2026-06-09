@@ -14,6 +14,7 @@ Spring-friendly wrapper for the Solace Java API. Provides auto-configuration, an
 - Optional per-consumer/per-publisher isolation via `solace.isolateConsumers` and `solace.isolatePublishers`.
 - Message property support: correlation ID, reply-to, TTL, priority, app message type/id, eliding eligible, class of service, sender ID, sequence number, HTTP content type/encoding, delivery mode, message expiration, user properties, and persistent-only fields (TTL, expiration, ack-immediately, DMQ-eligible).
 - Configurable publisher executor sizing and direct publisher backpressure.
+- Micrometer metrics for publish/consume counters, latency timers, backpressure rejections, retries, and connection/active-endpoint gauges, exposed through Spring Boot Actuator (Prometheus-ready). See [Metrics & Observability](#metrics--observability).
 
 ## Requirements
 - JDK 18+
@@ -238,6 +239,70 @@ Note: `stopConsumer(...)` stops without unregistering; `removeConsumer(...)` shu
 - Publisher resources are initialized at bean startup (`@PostConstruct`) and terminated on shutdown (`@PreDestroy`), including the executor.
 - Consumer manager and connection manager also shut down resources on `@PreDestroy`.
 
+## Metrics & Observability
+The wrapper publishes [Micrometer](https://micrometer.io) metrics out of the box. Because the
+library depends on `spring-boot-starter-actuator`, the meters are automatically registered with the
+application's `MeterRegistry` and surfaced via Actuator. When no registry is present (e.g. plain
+Spring contexts), a fallback `SimpleMeterRegistry` is auto-configured.
+
+### Meters emitted
+| Meter | Type | Tags | Meaning |
+|-------|------|------|---------|
+| `solace.publish.total` | counter | `outcome`, `deliveryMode`, `destination`, `clientName` | Publish attempts by outcome (`success`/`failure`) |
+| `solace.publish.latency` | timer | `outcome`, `deliveryMode`, `destination`, `clientName` | Publish latency distribution (percentile histogram enabled) |
+| `solace.publish.backpressure.rejected` | counter | `deliveryMode`, `destination`, `clientName` | Publishes rejected due to backpressure/buffer overflow |
+| `solace.consume.total` | counter | `outcome`, `destination`, `consumerId` | Messages consumed by outcome (`success`/`failure`) |
+| `solace.consume.latency` | timer | `outcome`, `destination`, `consumerId` | Message processing latency distribution |
+| `solace.consume.retries.total` | counter | `destination`, `consumerId` | Local backoff re-attempts |
+| `solace.connection.up` | gauge | – | `1` when the primary connection is up, else `0` |
+| `solace.publishers.active` | gauge | – | Active underlying publisher instances |
+| `solace.consumers.active` | gauge | – | Running consumers |
+
+`destination` is the topic for publishes and the queue (or comma-joined topics) for consumers.
+
+### Configuration
+```yaml
+solace:
+  metrics:
+    enabled: true                 # set false to disable all Solace metrics
+    include-destination-tag: true # set false to drop the per-destination tag (lowers cardinality)
+
+# Expose the metrics/Prometheus endpoints (Actuator exposes only health over HTTP by default)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+```
+For Prometheus scraping, add `io.micrometer:micrometer-registry-prometheus` to your application
+(it is an optional dependency here) so the `/actuator/prometheus` endpoint is available.
+
+### Example queries
+PromQL:
+```promql
+# Publish success rate over 5m
+sum(rate(solace_publish_total{outcome="success"}[5m]))
+  / sum(rate(solace_publish_total[5m]))
+
+# p99 publish latency (seconds) by delivery mode
+histogram_quantile(0.99, sum(rate(solace_publish_latency_seconds_bucket[5m])) by (le, deliveryMode))
+
+# Consume failures per second by queue
+sum(rate(solace_consume_total{outcome="failure"}[5m])) by (destination)
+
+# Backpressure rejections per second
+sum(rate(solace_publish_backpressure_rejected_total[5m]))
+
+# Connections currently down
+sum(solace_connection_up == 0)
+```
+Grafana panel suggestions: a stat panel on `solace_connection_up`, a time series of
+`solace_publishers_active` / `solace_consumers_active`, and a latency heatmap from
+`solace_publish_latency_seconds_bucket`.
+
+See [`docs/METRICS.md`](docs/METRICS.md) for the full reference, including programmatic access to
+the `SolaceMetrics` bean.
+
 ## Annotation Reference
 - `docs/ANNOTATIONS.md` lists annotation parameters, defaults, and usage patterns.
 
@@ -274,7 +339,6 @@ Note: `stopConsumer(...)` stops without unregistering; `removeConsumer(...)` shu
 - When `solace.isolateConsumers` or `solace.isolatePublishers` is enabled, reconnect retries are forced on (for stability).
 
 ## Roadmap
-- Metrics (Micrometer) for publish/consume/ack/nack.
 - Additional examples and cookbook content.
 - Expanded configuration docs and TLS walkthroughs.
 - Additional configuration coverage and TLS examples.

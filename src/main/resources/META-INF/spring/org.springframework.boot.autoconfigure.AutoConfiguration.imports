@@ -1,1 +1,2 @@
+com.solace.wrapper.metrics.SolaceMetricsAutoConfiguration
 com.solace.wrapper.config.SolaceAutoConfiguration

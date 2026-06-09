@@ -974,6 +974,53 @@ public class SolacePublisherTest {
         assertThat(env.lastPersistentTopic).isEqualTo("p/ctx");
     }
 
+    @Test
+    void publish_records_success_metrics() {
+        log.info("TEST: publish_records_success_metrics - verifies publish counter + latency timer increment on success");
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        publisher.setMetrics(new com.solace.wrapper.metrics.SolaceMetrics(registry, true));
+
+        publisher.publishToTopic("t/metric", "hello");
+
+        io.micrometer.core.instrument.Counter c = registry.find("solace.publish.total")
+                .tag("outcome", "success").tag("deliveryMode", "DIRECT").tag("destination", "t/metric").counter();
+        assertThat(c).isNotNull();
+        assertThat(c.count()).isEqualTo(1.0);
+        assertThat(registry.find("solace.publish.latency").tag("outcome", "success").timer().count()).isEqualTo(1L);
+    }
+
+    @Test
+    void publish_records_failure_metrics_on_double_failure() {
+        log.info("TEST: publish_records_failure_metrics_on_double_failure - verifies failure counter increments when retries exhausted");
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        publisher.setMetrics(new com.solace.wrapper.metrics.SolaceMetrics(registry, true));
+
+        env.directFailuresRemaining = 2; // both initial + retry fail
+        assertThatThrownBy(() -> publisher.publishToTopic("t/fail-metric", "x"))
+                .isInstanceOf(SolacePublishException.class);
+
+        assertThat(registry.find("solace.publish.total").tag("outcome", "failure").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void publish_records_backpressure_rejection() {
+        log.info("TEST: publish_records_backpressure_rejection - verifies backpressure-styled failures increment the rejection counter");
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        publisher.setMetrics(new com.solace.wrapper.metrics.SolaceMetrics(registry, true));
+
+        env.backpressureMode = true;
+        env.directFailuresRemaining = 2; // both attempts throw a backpressure-styled exception
+        assertThatThrownBy(() -> publisher.publishToTopic("t/bp", "x"))
+                .isInstanceOf(SolacePublishException.class);
+
+        assertThat(registry.find("solace.publish.backpressure.rejected").counter().count())
+                .isEqualTo(1.0);
+    }
+
     // Note: receipt-listener supported path is not simulated here; we rely on
     // best-effort confirmations (no listener available) to keep test harness simple.
 
@@ -986,6 +1033,8 @@ public class SolacePublisherTest {
         final AtomicBoolean failNextPersistentPublish = new AtomicBoolean(false);
         volatile int directFailuresRemaining = 0;
         volatile int persistentFailuresRemaining = 0;
+        // When true, simulated direct failures throw a backpressure/overflow-styled exception.
+        volatile boolean backpressureMode = false;
         volatile boolean supportReceipts = false;
         volatile boolean receiptException = false;
         volatile String lastDirectTopic;
@@ -1098,6 +1147,9 @@ public class SolacePublisherTest {
                                                 }
                                                 if (SolacePublisherTest.CURRENT.directFailuresRemaining > 0) {
                                                     SolacePublisherTest.CURRENT.directFailuresRemaining--;
+                                                    if (SolacePublisherTest.CURRENT.backpressureMode) {
+                                                        throw new IllegalStateException("Publisher buffer is full due to backpressure");
+                                                    }
                                                     throw new IllegalStateException("simulated direct failure (counter)");
                                                 }
                                                 SolacePublisherTest.CURRENT.directPublishCalls.incrementAndGet();
