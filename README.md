@@ -10,6 +10,7 @@ Spring-friendly wrapper for the Solace Java API. Provides auto-configuration, an
 - Auto-configured Solace `MessagingService` and JSON serializer (Jackson).
 - Publisher with retry/reinit, backpressure control, persistent receipts (best-effort), and async helpers with timeouts/confirm.
 - `@SolacePublish` and `@SolaceConsumer` annotations with SpEL support for conditional publishing and property enrichment.
+- Request-reply via `@SolaceReplier` (return value = reply) and an injectable `SolaceRequestor` (blocking + async). See [Request-Reply](#request-reply).
 - Direct and persistent consumption with optional queue auto-create, manual/auto ack, and local backoff.
 - Optional per-consumer/per-publisher isolation via `solace.isolateConsumers` and `solace.isolatePublishers`.
 - Message property support: correlation ID, reply-to, TTL, priority, app message type/id, eliding eligible, class of service, sender ID, sequence number, HTTP content type/encoding, delivery mode, message expiration, user properties, and persistent-only fields (TTL, expiration, ack-immediately, DMQ-eligible).
@@ -225,6 +226,46 @@ class ConsumerLifecycle {
 }
 ```
 Note: `stopConsumer(...)` stops without unregistering; `removeConsumer(...)` shuts down and removes.
+
+## Request-Reply
+First-class request-reply built on the Solace API's native request-reply (correlation and the
+reply-to inbox are handled automatically; direct-mode messaging). See
+[`docs/REQUEST-REPLY.md`](docs/REQUEST-REPLY.md) for the full reference.
+
+### Replier (service side) — `@SolaceReplier`
+The method's return value is serialized and sent back as the reply. A `void`/`null` result sends no
+reply (the requestor times out). An optional `InboundMessage` parameter gives access to raw headers.
+```java
+@Component
+class PricingService {
+  @SolaceReplier(topic = "pricing/quote/v1")
+  public Quote handle(QuoteRequest req) {
+    return priceEngine.quote(req);   // return value becomes the reply
+  }
+}
+```
+
+### Requestor (client side) — `SolaceRequestor`
+Inject the auto-configured `SolaceRequestor` and send a request, blocking or async:
+```java
+@Autowired SolaceRequestor requestor;
+
+Quote q = requestor.request("pricing/quote/v1", req, Quote.class, Duration.ofSeconds(5));
+
+CompletableFuture<Quote> f = requestor.requestAsync("pricing/quote/v1", req, Quote.class);
+```
+Overloads without an explicit timeout use `solace.request-reply.default-timeout-ms` (default 5000).
+A missing reply throws `SolaceRequestTimeoutException` (blocking) or completes the future
+exceptionally (async); other failures map to `SolaceRequestException`.
+
+### Configuration & metrics
+```yaml
+solace:
+  request-reply:
+    default-timeout-ms: 5000
+```
+Emits `solace.request.total` / `solace.request.latency` / `solace.request.timeouts.total` and
+`solace.reply.total` when metrics are enabled (see [Metrics & Observability](#metrics--observability)).
 
 ## Error handling and retries
 - Publisher retries once after reinitializing the underlying publisher (direct and persistent) and propagates `SolacePublishException` on failure.
