@@ -107,9 +107,12 @@ public class SolaceReplierEndpoint {
                     : builder.build(subscription, ShareName.of(shareName));
 
             try {
-                receiver.setReplyFailureListener(event ->
-                        logger.error("Reply failed for replier {} on topic {}: {}", replierId, topic,
-                                event != null && event.getException() != null ? event.getException().getMessage() : "unknown"));
+                receiver.setReplyFailureListener(event -> {
+                    // A reply that was attempted but failed to deliver (e.g. backpressure/broker side).
+                    metrics.recordReply(SolaceMetrics.OUTCOME_FAILURE, topic, replierId);
+                    logger.error("Reply delivery failed for replier {} on topic {}: {}", replierId, topic,
+                            event != null && event.getException() != null ? event.getException().getMessage() : "unknown");
+                });
             } catch (Throwable t) {
                 logger.debug("ReplyFailureListener not applied for {}: {}", replierId, t.toString());
             }
@@ -160,14 +163,16 @@ public class SolaceReplierEndpoint {
                 OutboundMessage reply = serializer.serialize(messagingService, result);
                 replier.reply(reply);
                 logger.debug("Replier {} answered request on topic {}", replierId, topic);
+                metrics.recordReply(SolaceMetrics.OUTCOME_SUCCESS, topic, replierId);
             } else {
+                // Handled, but no reply was produced — the requestor will observe a timeout.
                 logger.debug("Replier {} produced no reply for request on topic {} (void/null result)",
                         replierId, topic);
+                metrics.recordReply(SolaceMetrics.OUTCOME_NO_REPLY, topic, replierId);
             }
-            metrics.recordReply(true, topic, replierId);
         } catch (Exception e) {
             // No reply is sent on failure; the requestor will observe a timeout.
-            metrics.recordReply(false, topic, replierId);
+            metrics.recordReply(SolaceMetrics.OUTCOME_FAILURE, topic, replierId);
             logger.error("Replier {} failed to handle request on topic {}: {}",
                     replierId, topic, e.getMessage(), e);
         }

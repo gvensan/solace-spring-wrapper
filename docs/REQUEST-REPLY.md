@@ -28,6 +28,9 @@ Behavior:
 - If the method throws, **no reply** is sent (requestor times out); the error is logged and metered.
 - An optional `com.solace.messaging.receiver.InboundMessage` parameter exposes the raw request
   (headers/properties), mirroring `@SolaceConsumer`.
+- **Fail-fast startup:** if an `autoStart` replier cannot start (e.g. the broker is unreachable at
+  boot), context creation fails rather than booting silently with no live listener. Use
+  `autoStart = false` to register without starting and start later via the processor.
 
 Attributes:
 
@@ -70,6 +73,10 @@ Semantics:
 - Any other failure maps to `SolaceRequestException`.
 - Requests are routed through a single pooled request-reply publisher (reusing the wrapper's
   connection pooling).
+- **Self-healing publisher:** on a recoverable (non-timeout) send failure the cached request-reply
+  publisher is terminated and rebuilt, and the request is retried once — so a single poisoned
+  publisher cannot permanently strand subsequent calls. Timeouts do **not** trigger a rebuild (they
+  mean no replier answered, which a rebuild would not fix).
 
 ## Configuration
 
@@ -89,6 +96,11 @@ When metrics are enabled (a `MeterRegistry` is present — see `docs/METRICS.md`
 | `solace.request.latency` | timer | `outcome`, `destination` |
 | `solace.request.timeouts.total` | counter | `destination` |
 | `solace.reply.total` | counter | `outcome`, `destination`, `replierId` |
+
+`solace.reply.total`'s `outcome` distinguishes `success` (reply delivered), `no_reply` (handled but
+void/null result — the requestor will time out), and `failure` (the handler threw, or the broker
+reported a reply-delivery failure). This lets dashboards separate intentional no-reply from real
+failures rather than counting every handler invocation as a success.
 
 Everything degrades to a no-op when metrics are disabled.
 

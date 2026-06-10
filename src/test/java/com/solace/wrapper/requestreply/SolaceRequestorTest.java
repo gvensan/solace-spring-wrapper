@@ -39,6 +39,8 @@ class SolaceRequestorTest {
         volatile long lastTimeout;
         final AtomicInteger startCount = new AtomicInteger();
         final AtomicInteger terminateCount = new AtomicInteger();
+        // When > 0, the next N blocking sends throw a transient (non-timeout) error, then succeed.
+        final AtomicInteger transientFailures = new AtomicInteger(0);
 
         MessagingService service() {
             return (MessagingService) Proxy.newProxyInstance(getClass().getClassLoader(),
@@ -80,6 +82,9 @@ class SolaceRequestorTest {
                                 // (OutboundMessage, Topic, long) — record and react to mode.
                                 lastTopic = a[1].toString();
                                 lastTimeout = (long) a[a.length - 1];
+                                if (transientFailures.getAndUpdate(n -> n > 0 ? n - 1 : 0) > 0) {
+                                    throw new RuntimeException("transient send failure");
+                                }
                                 if (mode == Mode.TIMEOUT) throw timeoutException();
                                 if (mode == Mode.ERROR) throw new RuntimeException("broker error");
                                 return reply();
@@ -227,6 +232,36 @@ class SolaceRequestorTest {
         assertThatThrownBy(() -> requestor.request("rr/m", "req", String.class, Duration.ofMillis(200)))
                 .isInstanceOf(SolaceRequestTimeoutException.class);
         assertThat(registry.find("solace.request.timeouts.total").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void recoverable_failure_reinits_publisher_and_retries_once() {
+        CURRENT.transientFailures.set(1); // first send fails, retry should succeed on a rebuilt publisher
+        String reply = requestor.request("rr/reinit", "req", String.class, Duration.ofSeconds(1));
+        assertThat(reply).isEqualTo("REPLY");
+        assertThat(CURRENT.terminateCount.get()).isEqualTo(1);   // poisoned publisher terminated
+        assertThat(CURRENT.startCount.get()).isEqualTo(2);       // original + rebuilt
+    }
+
+    @Test
+    void retry_failure_is_wrapped_after_reinit() {
+        CURRENT.mode = Mode.ERROR; // both attempts fail
+        assertThatThrownBy(() -> requestor.request("rr/reinit", "req", String.class, Duration.ofSeconds(1)))
+                .isInstanceOf(SolaceRequestException.class)
+                .isNotInstanceOf(SolaceRequestTimeoutException.class)
+                .hasMessageContaining("after retry");
+        assertThat(CURRENT.startCount.get()).isEqualTo(2);       // rebuilt once
+        assertThat(CURRENT.terminateCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void timeout_does_not_reinit_publisher() {
+        CURRENT.mode = Mode.TIMEOUT;
+        assertThatThrownBy(() -> requestor.request("rr/t", "req", String.class, Duration.ofMillis(300)))
+                .isInstanceOf(SolaceRequestTimeoutException.class);
+        // A timeout means no replier answered — the publisher is fine and must not be rebuilt.
+        assertThat(CURRENT.startCount.get()).isEqualTo(1);
+        assertThat(CURRENT.terminateCount.get()).isZero();
     }
 
     @Test

@@ -192,14 +192,18 @@ class SolaceMetricsTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         SolaceMetrics metrics = new SolaceMetrics(registry, true);
 
-        metrics.recordReply(true, "rr/quote", "replier-1");
-        metrics.recordReply(false, "rr/quote", "replier-1");
+        metrics.recordReply(SolaceMetrics.OUTCOME_SUCCESS, "rr/quote", "replier-1");
+        metrics.recordReply(SolaceMetrics.OUTCOME_FAILURE, "rr/quote", "replier-1");
+        metrics.recordReply(SolaceMetrics.OUTCOME_NO_REPLY, "rr/quote", "replier-1");
 
         assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
                 .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).tag("replierId", "replier-1")
                 .counter().count(), 0.0001);
         assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
                 .tag("outcome", SolaceMetrics.OUTCOME_FAILURE).counter().count(), 0.0001);
+        // Intentional no-reply is tracked distinctly from success and failure.
+        assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_NO_REPLY).counter().count(), 0.0001);
     }
 
     @Test
@@ -207,7 +211,7 @@ class SolaceMetricsTest {
         SolaceMetrics metrics = new SolaceMetrics(null);
         metrics.recordRequest(true, false, "rr/x", 1L);
         metrics.recordRequest(false, true, "rr/x", 1L);
-        metrics.recordReply(true, "rr/x", "r");
+        metrics.recordReply(SolaceMetrics.OUTCOME_SUCCESS, "rr/x", "r");
         assertFalse(metrics.isEnabled());
     }
 }

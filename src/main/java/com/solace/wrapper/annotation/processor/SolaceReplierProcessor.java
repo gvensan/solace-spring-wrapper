@@ -3,6 +3,7 @@ package com.solace.wrapper.annotation.processor;
 import com.solace.messaging.receiver.InboundMessage;
 import com.solace.wrapper.annotation.SolaceReplier;
 import com.solace.wrapper.connection.SolaceConnectionManager;
+import com.solace.wrapper.exception.SolaceReplierException;
 import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.requestreply.SolaceReplierEndpoint;
 import com.solace.wrapper.serialization.MessageSerializer;
@@ -111,6 +112,9 @@ public class SolaceReplierProcessor implements BeanPostProcessor {
 
             endpoints.put(replierId, endpoint);
             if (annotation.autoStart()) {
+                // Fail fast: an autoStart replier that cannot start would otherwise leave the app
+                // running with no live listener, surfacing only as request timeouts. Propagate so
+                // context startup fails visibly. (Set autoStart=false to register without starting.)
                 endpoint.start();
                 logger.info("Registered and started Solace replier '{}' on topic '{}' for {} (request type {})",
                         replierId, topic, getMethodSignature(method), requestType.getSimpleName());
@@ -118,7 +122,13 @@ public class SolaceReplierProcessor implements BeanPostProcessor {
                 logger.info("Registered Solace replier '{}' on topic '{}' for {} (autoStart=false)",
                         replierId, topic, getMethodSignature(method));
             }
+        } catch (SolaceReplierException e) {
+            // Startup failure of an autoStart replier — do not swallow; fail context creation.
+            logger.error("Failed to start Solace replier for method {}", getMethodSignature(method), e);
+            throw e;
         } catch (Exception e) {
+            // Configuration/reflection errors (bad SpEL, type resolution, etc.) are logged and the
+            // replier is skipped, consistent with the consumer/publish annotation processors.
             logger.error("Failed to register Solace replier for method {}", getMethodSignature(method), e);
         }
     }

@@ -85,29 +85,64 @@ public class SolaceRequestor {
      */
     public <R> R request(String topic, Object payload, Class<R> replyType, Duration timeout) {
         long timeoutMs = resolveTimeout(timeout);
-        RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
-        MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
-        OutboundMessage request = serializer.serialize(service, payload);
         long start = System.nanoTime();
         boolean success = false;
         boolean timedOut = false;
         try {
-            InboundMessage reply = publisher.publishAwaitResponse(request, Topic.of(topic), timeoutMs);
+            InboundMessage reply = sendAwaitWithRetry(topic, payload, timeoutMs);
             R result = serializer.deserialize(reply, replyType);
             success = true;
             return result;
-        } catch (PubSubPlusClientException.TimeoutException e) {
+        } catch (SolaceRequestTimeoutException e) {
             timedOut = true;
-            throw new SolaceRequestTimeoutException(
-                    "Request to '" + topic + "' timed out after " + timeoutMs + "ms", e);
+            throw e;
+        } finally {
+            metrics.recordRequest(success, timedOut, topic, System.nanoTime() - start);
+        }
+    }
+
+    /**
+     * Sends a request and awaits the reply, retrying once with a freshly rebuilt publisher when the
+     * first attempt fails for a reason other than a reply timeout (a timeout means no replier
+     * answered, which a rebuild cannot fix). This prevents a single poisoned publisher from
+     * stranding all subsequent request-reply calls.
+     */
+    private InboundMessage sendAwaitWithRetry(String topic, Object payload, long timeoutMs) {
+        try {
+            return sendAwait(topic, payload, timeoutMs);
+        } catch (PubSubPlusClientException.TimeoutException e) {
+            throw timeoutException(topic, timeoutMs, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SolaceRequestException("Request to '" + topic + "' was interrupted", e);
         } catch (Exception e) {
-            throw new SolaceRequestException("Request to '" + topic + "' failed: " + e.getMessage(), e);
-        } finally {
-            metrics.recordRequest(success, timedOut, topic, System.nanoTime() - start);
+            logger.warn("Request to '{}' failed, reinitializing request-reply publisher and retrying", topic, e);
+            reinitPublisher(PRIMARY_KEY);
+            try {
+                return sendAwait(topic, payload, timeoutMs);
+            } catch (PubSubPlusClientException.TimeoutException e2) {
+                throw timeoutException(topic, timeoutMs, e2);
+            } catch (InterruptedException e2) {
+                Thread.currentThread().interrupt();
+                throw new SolaceRequestException("Request to '" + topic + "' was interrupted", e2);
+            } catch (Exception e2) {
+                throw new SolaceRequestException(
+                        "Request to '" + topic + "' failed after retry: " + e2.getMessage(), e2);
+            }
         }
+    }
+
+    private InboundMessage sendAwait(String topic, Object payload, long timeoutMs)
+            throws InterruptedException {
+        RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
+        MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
+        OutboundMessage request = serializer.serialize(service, payload);
+        return publisher.publishAwaitResponse(request, Topic.of(topic), timeoutMs);
+    }
+
+    private SolaceRequestTimeoutException timeoutException(String topic, long timeoutMs, Throwable cause) {
+        return new SolaceRequestTimeoutException(
+                "Request to '" + topic + "' timed out after " + timeoutMs + "ms", cause);
     }
 
     // ---------------------------------------------------------------------
@@ -129,34 +164,51 @@ public class SolaceRequestor {
         CompletableFuture<R> future = new CompletableFuture<>();
         long start = System.nanoTime();
         try {
-            RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
-            MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
-            OutboundMessage request = serializer.serialize(service, payload);
-
-            publisher.publish(request, (reply, userContext, exception) -> {
-                long elapsed = System.nanoTime() - start;
-                if (exception != null) {
-                    boolean timedOut = exception instanceof PubSubPlusClientException.TimeoutException;
-                    metrics.recordRequest(false, timedOut, topic, elapsed);
-                    future.completeExceptionally(mapAsyncException(topic, timeoutMs, exception));
-                } else {
-                    try {
-                        R result = serializer.deserialize(reply, replyType);
-                        metrics.recordRequest(true, false, topic, elapsed);
-                        future.complete(result);
-                    } catch (Exception de) {
-                        metrics.recordRequest(false, false, topic, elapsed);
-                        future.completeExceptionally(
-                                new SolaceRequestException("Failed to deserialize reply from '" + topic + "'", de));
-                    }
-                }
-            }, null, Topic.of(topic), timeoutMs);
+            publishAsyncOnce(topic, payload, replyType, timeoutMs, future, start);
         } catch (Exception e) {
-            metrics.recordRequest(false, false, topic, System.nanoTime() - start);
-            future.completeExceptionally(
-                    new SolaceRequestException("Failed to send request to '" + topic + "': " + e.getMessage(), e));
+            // Synchronous publish failure (e.g. poisoned publisher): rebuild and retry once.
+            logger.warn("Async request to '{}' failed to send, reinitializing publisher and retrying", topic, e);
+            reinitPublisher(PRIMARY_KEY);
+            try {
+                publishAsyncOnce(topic, payload, replyType, timeoutMs, future, start);
+            } catch (Exception e2) {
+                metrics.recordRequest(false, false, topic, System.nanoTime() - start);
+                future.completeExceptionally(new SolaceRequestException(
+                        "Failed to send request to '" + topic + "' after retry: " + e2.getMessage(), e2));
+            }
         }
         return future;
+    }
+
+    private <R> void publishAsyncOnce(String topic, Object payload, Class<R> replyType, long timeoutMs,
+                                      CompletableFuture<R> future, long start) {
+        RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
+        MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
+        OutboundMessage request = serializer.serialize(service, payload);
+
+        publisher.publish(request, (reply, userContext, exception) -> {
+            long elapsed = System.nanoTime() - start;
+            if (exception != null) {
+                boolean timedOut = exception instanceof PubSubPlusClientException.TimeoutException;
+                metrics.recordRequest(false, timedOut, topic, elapsed);
+                if (!timedOut) {
+                    // A non-timeout reply error may indicate a broken publisher; evict so the next
+                    // call rebuilds it (no terminate here to avoid blocking the SDK callback thread).
+                    publishers.remove(PRIMARY_KEY);
+                }
+                future.completeExceptionally(mapAsyncException(topic, timeoutMs, exception));
+            } else {
+                try {
+                    R result = serializer.deserialize(reply, replyType);
+                    metrics.recordRequest(true, false, topic, elapsed);
+                    future.complete(result);
+                } catch (Exception de) {
+                    metrics.recordRequest(false, false, topic, elapsed);
+                    future.completeExceptionally(
+                            new SolaceRequestException("Failed to deserialize reply from '" + topic + "'", de));
+                }
+            }
+        }, null, Topic.of(topic), timeoutMs);
     }
 
     private SolaceRequestException mapAsyncException(String topic, long timeoutMs, Throwable exception) {
@@ -177,6 +229,18 @@ public class SolaceRequestor {
             throw new SolaceRequestException("Request timeout must be positive (was " + ms + "ms)");
         }
         return ms;
+    }
+
+    /** Removes and terminates the cached publisher for {@code key} so the next call rebuilds it. */
+    private void reinitPublisher(String key) {
+        RequestReplyMessagePublisher existing = publishers.remove(key);
+        if (existing != null) {
+            try {
+                existing.terminate(terminationTimeoutMs);
+            } catch (Exception e) {
+                logger.debug("Error terminating request-reply publisher during reinit: {}", e.getMessage());
+            }
+        }
     }
 
     private RequestReplyMessagePublisher getOrCreatePublisher(String key, String clientName) {

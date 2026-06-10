@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SolaceReplierProcessorTest {
 
     private SolaceReplierProcessor processor;
+    static volatile boolean CONNECTED = true;
 
     static class StubCM extends SolaceConnectionManager {
         StubCM(com.solace.wrapper.config.SolaceProperties p) { super(p); }
@@ -38,7 +39,7 @@ class SolaceReplierProcessorTest {
                     new Class[]{MessagingService.class}, (p, m, a) -> {
                         switch (m.getName()) {
                             case "connect": return p;
-                            case "isConnected": return true;
+                            case "isConnected": return CONNECTED;
                             case "requestReply": return rr(m.getReturnType());
                             default:
                                 if (m.getReturnType().equals(boolean.class)) return false;
@@ -85,6 +86,7 @@ class SolaceReplierProcessorTest {
 
     @BeforeEach
     void setup() throws Exception {
+        CONNECTED = true;
         processor = new SolaceReplierProcessor();
         var props = new com.solace.wrapper.config.SolaceProperties();
         props.setHost("tcp://noop:55555"); props.setMsgVpn("default");
@@ -149,6 +151,15 @@ class SolaceReplierProcessorTest {
 
         processor.startAll();
         assertThat(b.isRunning()).isTrue();
+    }
+
+    @Test
+    void autostart_replier_failure_fails_fast() {
+        CONNECTED = false; // start() will fail because the messaging service is not connected
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(
+                () -> processor.postProcessAfterInitialization(new Beans(), "beans")))
+                .as("a broken autoStart replier must fail context startup, not be swallowed")
+                .isInstanceOf(com.solace.wrapper.exception.SolaceReplierException.class);
     }
 
     @Test

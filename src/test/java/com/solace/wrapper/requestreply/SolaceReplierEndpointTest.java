@@ -296,6 +296,15 @@ class SolaceReplierEndpointTest {
         deliverRequest();
         assertThat(registry.find("solace.reply.total").tag("outcome", "failure").counter().count())
                 .isEqualTo(1.0);
+
+        // A void/null result is recorded as a distinct no_reply outcome (not success).
+        CURRENT = new Env();
+        SolaceReplierEndpoint silent = endpoint("fireAndForget", String.class);
+        silent.withMetrics(metrics);
+        silent.start();
+        deliverRequest();
+        assertThat(registry.find("solace.reply.total").tag("outcome", "no_reply").counter().count())
+                .isEqualTo(1.0);
     }
 
     @Test

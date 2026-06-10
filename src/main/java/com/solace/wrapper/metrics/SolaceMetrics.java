@@ -42,6 +42,8 @@ public class SolaceMetrics {
     /** Outcome tag values. */
     public static final String OUTCOME_SUCCESS = "success";
     public static final String OUTCOME_FAILURE = "failure";
+    /** Replier handled the request but intentionally produced no reply (void/null result). */
+    public static final String OUTCOME_NO_REPLY = "no_reply";
 
     static final String PUBLISH_COUNTER = "solace.publish.total";
     static final String PUBLISH_TIMER = "solace.publish.latency";
@@ -237,18 +239,19 @@ public class SolaceMetrics {
     }
 
     /**
-     * Records a reply produced by the replier side.
+     * Records a reply outcome from the replier side.
      *
-     * @param success whether the replier handled the request and replied successfully
+     * @param outcome one of {@link #OUTCOME_SUCCESS} (reply delivered), {@link #OUTCOME_NO_REPLY}
+     *        (handled but no reply sent — void/null), or {@link #OUTCOME_FAILURE} (handler threw or
+     *        reply delivery failed)
      * @param destination the request topic
      * @param replierId the replier identifier
      */
-    public void recordReply(boolean success, String destination, String replierId) {
+    public void recordReply(String outcome, String destination, String replierId) {
         if (registry == null) {
             return;
         }
-        counter(REPLY_COUNTER, replyTags(success ? OUTCOME_SUCCESS : OUTCOME_FAILURE, destination, replierId))
-                .increment();
+        counter(REPLY_COUNTER, replyTags(outcome, destination, replierId)).increment();
     }
 
     // ---------------------------------------------------------------------
