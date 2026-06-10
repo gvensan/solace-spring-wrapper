@@ -9,6 +9,7 @@ import com.solace.messaging.resources.Topic;
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.exception.SolaceRequestException;
 import com.solace.wrapper.exception.SolaceRequestTimeoutException;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,8 @@ public class SolaceRequestor {
     private final long defaultTimeoutMs;
     private final Map<String, RequestReplyMessagePublisher> publishers = new ConcurrentHashMap<>();
     private long terminationTimeoutMs = 5000;
+    /** Optional metrics facade; never null (defaults to a disabled no-op). */
+    private volatile SolaceMetrics metrics = new SolaceMetrics(null);
 
     public SolaceRequestor(SolaceConnectionManager connectionManager, MessageSerializer serializer) {
         this(connectionManager, serializer, 5000);
@@ -51,6 +54,13 @@ public class SolaceRequestor {
         this.serializer = serializer;
         this.defaultTimeoutMs = defaultTimeoutMs > 0 ? defaultTimeoutMs : 5000;
         this.terminationTimeoutMs = connectionManager.getProperties().getTerminationTimeoutMs();
+    }
+
+    /** Injects the metrics facade. Optional: when not set, request metrics are skipped. */
+    public void setMetrics(SolaceMetrics metrics) {
+        if (metrics != null) {
+            this.metrics = metrics;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -78,10 +88,16 @@ public class SolaceRequestor {
         RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
         MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
         OutboundMessage request = serializer.serialize(service, payload);
+        long start = System.nanoTime();
+        boolean success = false;
+        boolean timedOut = false;
         try {
             InboundMessage reply = publisher.publishAwaitResponse(request, Topic.of(topic), timeoutMs);
-            return serializer.deserialize(reply, replyType);
+            R result = serializer.deserialize(reply, replyType);
+            success = true;
+            return result;
         } catch (PubSubPlusClientException.TimeoutException e) {
+            timedOut = true;
             throw new SolaceRequestTimeoutException(
                     "Request to '" + topic + "' timed out after " + timeoutMs + "ms", e);
         } catch (InterruptedException e) {
@@ -89,6 +105,8 @@ public class SolaceRequestor {
             throw new SolaceRequestException("Request to '" + topic + "' was interrupted", e);
         } catch (Exception e) {
             throw new SolaceRequestException("Request to '" + topic + "' failed: " + e.getMessage(), e);
+        } finally {
+            metrics.recordRequest(success, timedOut, topic, System.nanoTime() - start);
         }
     }
 
@@ -109,24 +127,32 @@ public class SolaceRequestor {
                                                  Duration timeout) {
         long timeoutMs = resolveTimeout(timeout);
         CompletableFuture<R> future = new CompletableFuture<>();
+        long start = System.nanoTime();
         try {
             RequestReplyMessagePublisher publisher = getOrCreatePublisher(PRIMARY_KEY, null);
             MessagingService service = connectionManager.createPublisherService(PRIMARY_KEY, null);
             OutboundMessage request = serializer.serialize(service, payload);
 
             publisher.publish(request, (reply, userContext, exception) -> {
+                long elapsed = System.nanoTime() - start;
                 if (exception != null) {
+                    boolean timedOut = exception instanceof PubSubPlusClientException.TimeoutException;
+                    metrics.recordRequest(false, timedOut, topic, elapsed);
                     future.completeExceptionally(mapAsyncException(topic, timeoutMs, exception));
                 } else {
                     try {
-                        future.complete(serializer.deserialize(reply, replyType));
+                        R result = serializer.deserialize(reply, replyType);
+                        metrics.recordRequest(true, false, topic, elapsed);
+                        future.complete(result);
                     } catch (Exception de) {
+                        metrics.recordRequest(false, false, topic, elapsed);
                         future.completeExceptionally(
                                 new SolaceRequestException("Failed to deserialize reply from '" + topic + "'", de));
                     }
                 }
             }, null, Topic.of(topic), timeoutMs);
         } catch (Exception e) {
+            metrics.recordRequest(false, false, topic, System.nanoTime() - start);
             future.completeExceptionally(
                     new SolaceRequestException("Failed to send request to '" + topic + "': " + e.getMessage(), e));
         }

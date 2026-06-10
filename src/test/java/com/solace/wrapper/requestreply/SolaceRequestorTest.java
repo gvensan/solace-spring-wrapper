@@ -213,6 +213,23 @@ class SolaceRequestorTest {
     }
 
     @Test
+    void records_request_metrics_on_success_and_timeout() {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        requestor.setMetrics(new com.solace.wrapper.metrics.SolaceMetrics(registry, true));
+
+        requestor.request("rr/m", "req", String.class, Duration.ofSeconds(1));
+        assertThat(registry.find("solace.request.total").tag("outcome", "success").counter().count())
+                .isEqualTo(1.0);
+        assertThat(registry.find("solace.request.latency").timer().count()).isEqualTo(1L);
+
+        CURRENT.mode = Mode.TIMEOUT;
+        assertThatThrownBy(() -> requestor.request("rr/m", "req", String.class, Duration.ofMillis(200)))
+                .isInstanceOf(SolaceRequestTimeoutException.class);
+        assertThat(registry.find("solace.request.timeouts.total").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
     void publisher_create_failure_is_wrapped() {
         CURRENT.failBuild = true;
         assertThatThrownBy(() -> requestor.request("rr/x", "req", String.class, Duration.ofSeconds(1)))

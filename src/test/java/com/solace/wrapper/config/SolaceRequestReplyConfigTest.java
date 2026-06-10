@@ -2,11 +2,16 @@ package com.solace.wrapper.config;
 
 import com.solace.messaging.MessagingService;
 import com.solace.wrapper.connection.SolaceConnectionManager;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.requestreply.SolaceRequestor;
 import com.solace.wrapper.serialization.JsonMessageSerializer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Covers {@link SolaceRequestReplyProperties} and the {@link SolaceAutoConfiguration#solaceRequestor}
@@ -41,7 +46,12 @@ class SolaceRequestReplyConfigTest {
         SolaceRequestReplyProperties rr = new SolaceRequestReplyProperties();
         rr.setDefaultTimeoutMs(7777L);
 
-        SolaceRequestor requestor = cfg.solaceRequestor(new NoConnectCM(props()), new JsonMessageSerializer(), rr);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<SolaceMetrics> metricsProvider = mock(ObjectProvider.class);
+        when(metricsProvider.getIfAvailable()).thenReturn(new SolaceMetrics(new SimpleMeterRegistry(), true));
+
+        SolaceRequestor requestor = cfg.solaceRequestor(new NoConnectCM(props()), new JsonMessageSerializer(),
+                rr, metricsProvider);
         assertThat(requestor).isNotNull();
         assertThat(requestor.getActivePublisherCount()).isZero();
     }

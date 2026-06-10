@@ -52,6 +52,10 @@ public class SolaceMetrics {
     static final String CONNECTION_GAUGE = "solace.connection.up";
     static final String PUBLISHERS_GAUGE = "solace.publishers.active";
     static final String CONSUMERS_GAUGE = "solace.consumers.active";
+    static final String REQUEST_COUNTER = "solace.request.total";
+    static final String REQUEST_TIMER = "solace.request.latency";
+    static final String REQUEST_TIMEOUT_COUNTER = "solace.request.timeouts.total";
+    static final String REPLY_COUNTER = "solace.reply.total";
 
     private static final String UNKNOWN = "unknown";
 
@@ -208,6 +212,46 @@ public class SolaceMetrics {
     }
 
     // ---------------------------------------------------------------------
+    // Request-reply metrics
+    // ---------------------------------------------------------------------
+
+    /**
+     * Records a request-reply request from the requestor side: an outcome counter, a latency timer,
+     * and (when applicable) a dedicated timeout counter.
+     *
+     * @param success whether a reply was received and deserialized successfully
+     * @param timedOut whether the failure was a reply timeout (only meaningful when {@code !success})
+     * @param destination the request topic
+     * @param nanos elapsed request-to-reply time in nanoseconds
+     */
+    public void recordRequest(boolean success, boolean timedOut, String destination, long nanos) {
+        if (registry == null) {
+            return;
+        }
+        Tags tags = requestTags(success ? OUTCOME_SUCCESS : OUTCOME_FAILURE, destination);
+        counter(REQUEST_COUNTER, tags).increment();
+        timer(REQUEST_TIMER, tags).record(nanos, TimeUnit.NANOSECONDS);
+        if (!success && timedOut) {
+            counter(REQUEST_TIMEOUT_COUNTER, requestTags(null, destination)).increment();
+        }
+    }
+
+    /**
+     * Records a reply produced by the replier side.
+     *
+     * @param success whether the replier handled the request and replied successfully
+     * @param destination the request topic
+     * @param replierId the replier identifier
+     */
+    public void recordReply(boolean success, String destination, String replierId) {
+        if (registry == null) {
+            return;
+        }
+        counter(REPLY_COUNTER, replyTags(success ? OUTCOME_SUCCESS : OUTCOME_FAILURE, destination, replierId))
+                .increment();
+    }
+
+    // ---------------------------------------------------------------------
     // Gauges
     // ---------------------------------------------------------------------
 
@@ -274,6 +318,27 @@ public class SolaceMetrics {
             tags.add(Tag.of("destination", safe(destination)));
         }
         tags.add(Tag.of("consumerId", safe(consumerId)));
+        return Tags.of(tags);
+    }
+
+    private Tags requestTags(String outcome, String destination) {
+        List<Tag> tags = new ArrayList<>(2);
+        if (outcome != null) {
+            tags.add(Tag.of("outcome", safe(outcome)));
+        }
+        if (includeDestinationTag) {
+            tags.add(Tag.of("destination", safe(destination)));
+        }
+        return Tags.of(tags);
+    }
+
+    private Tags replyTags(String outcome, String destination, String replierId) {
+        List<Tag> tags = new ArrayList<>(3);
+        tags.add(Tag.of("outcome", safe(outcome)));
+        if (includeDestinationTag) {
+            tags.add(Tag.of("destination", safe(destination)));
+        }
+        tags.add(Tag.of("replierId", safe(replierId)));
         return Tags.of(tags);
     }
 

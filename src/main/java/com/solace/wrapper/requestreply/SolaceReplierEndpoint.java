@@ -10,6 +10,7 @@ import com.solace.messaging.resources.TopicSubscription;
 import com.solace.wrapper.annotation.SolaceReplier;
 import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.exception.SolaceReplierException;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.serialization.MessageSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +47,8 @@ public class SolaceReplierEndpoint {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private long terminationTimeoutMs = 5000;
+    /** Optional metrics facade; never null (defaults to a disabled no-op). */
+    private volatile SolaceMetrics metrics = new SolaceMetrics(null);
 
     private volatile MessagingService messagingService;
     private volatile RequestReplyMessageReceiver receiver;
@@ -72,6 +75,14 @@ public class SolaceReplierEndpoint {
     /** Sets the termination timeout (ms) used when stopping the receiver. */
     public SolaceReplierEndpoint withTerminationTimeout(long timeoutMs) {
         this.terminationTimeoutMs = Math.max(100, timeoutMs);
+        return this;
+    }
+
+    /** Injects the metrics facade. Optional: when not set, reply metrics are skipped. */
+    public SolaceReplierEndpoint withMetrics(SolaceMetrics metrics) {
+        if (metrics != null) {
+            this.metrics = metrics;
+        }
         return this;
     }
 
@@ -153,8 +164,10 @@ public class SolaceReplierEndpoint {
                 logger.debug("Replier {} produced no reply for request on topic {} (void/null result)",
                         replierId, topic);
             }
+            metrics.recordReply(true, topic, replierId);
         } catch (Exception e) {
             // No reply is sent on failure; the requestor will observe a timeout.
+            metrics.recordReply(false, topic, replierId);
             logger.error("Replier {} failed to handle request on topic {}: {}",
                     replierId, topic, e.getMessage(), e);
         }

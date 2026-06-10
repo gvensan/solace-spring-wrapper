@@ -276,6 +276,29 @@ class SolaceReplierEndpointTest {
     }
 
     @Test
+    void records_reply_metrics_on_success_and_failure() throws Exception {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        com.solace.wrapper.metrics.SolaceMetrics metrics =
+                new com.solace.wrapper.metrics.SolaceMetrics(registry, true);
+
+        SolaceReplierEndpoint ok = endpoint("echo", String.class);
+        ok.withMetrics(metrics);
+        ok.start();
+        deliverRequest();
+        assertThat(registry.find("solace.reply.total").tag("outcome", "success").counter().count())
+                .isEqualTo(1.0);
+
+        CURRENT = new Env();
+        SolaceReplierEndpoint bad = endpoint("boom", String.class);
+        bad.withMetrics(metrics);
+        bad.start();
+        deliverRequest();
+        assertThat(registry.find("solace.reply.total").tag("outcome", "failure").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
     void share_name_builds_with_share_subscription() throws Exception {
         Method m = Beans.class.getMethod("echo", String.class);
         SolaceReplierEndpoint shared = new SolaceReplierEndpoint("rs", "rr/echo", "group-1", "", String.class,

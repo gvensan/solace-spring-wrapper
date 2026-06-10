@@ -58,9 +58,12 @@ public class SolaceAutoConfiguration {
     @ConditionalOnMissingBean
     public SolaceRequestor solaceRequestor(SolaceConnectionManager connectionManager,
                                            MessageSerializer messageSerializer,
-                                           SolaceRequestReplyProperties requestReplyProperties) {
-        return new SolaceRequestor(connectionManager, messageSerializer,
+                                           SolaceRequestReplyProperties requestReplyProperties,
+                                           ObjectProvider<SolaceMetrics> metricsProvider) {
+        SolaceRequestor requestor = new SolaceRequestor(connectionManager, messageSerializer,
                 requestReplyProperties.getDefaultTimeoutMs());
+        requestor.setMetrics(metricsProvider.getIfAvailable());
+        return requestor;
     }
 
     /**

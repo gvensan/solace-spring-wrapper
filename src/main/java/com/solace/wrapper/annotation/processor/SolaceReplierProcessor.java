@@ -3,8 +3,10 @@ package com.solace.wrapper.annotation.processor;
 import com.solace.messaging.receiver.InboundMessage;
 import com.solace.wrapper.annotation.SolaceReplier;
 import com.solace.wrapper.connection.SolaceConnectionManager;
+import com.solace.wrapper.metrics.SolaceMetrics;
 import com.solace.wrapper.requestreply.SolaceReplierEndpoint;
 import com.solace.wrapper.serialization.MessageSerializer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeansException;
@@ -45,6 +47,9 @@ public class SolaceReplierProcessor implements BeanPostProcessor {
 
     @Autowired
     private SpelExpressionResolver spelResolver;
+
+    @Autowired
+    private ObjectProvider<SolaceMetrics> metricsProvider;
 
     private final AtomicInteger replierCounter = new AtomicInteger(0);
     private final Set<String> registeredReplierIds = ConcurrentHashMap.newKeySet();
@@ -100,6 +105,9 @@ public class SolaceReplierProcessor implements BeanPostProcessor {
                     connectionManager, messageSerializer,
                     annotation.backpressure(), annotation.backpressureCapacity());
             endpoint.withTerminationTimeout(connectionManager.getProperties().getTerminationTimeoutMs());
+            if (metricsProvider != null) {
+                endpoint.withMetrics(metricsProvider.getIfAvailable());
+            }
 
             endpoints.put(replierId, endpoint);
             if (annotation.autoStart()) {
