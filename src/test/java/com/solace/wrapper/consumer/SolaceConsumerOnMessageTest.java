@@ -202,6 +202,62 @@ class SolaceConsumerOnMessageTest {
         return c;
     }
 
+    private SolaceConsumer<String> persistentManualBackoff(String queue,
+                                                           SolaceManualAckMessageHandler<String> handler) {
+        SolaceConsumer<String> c = new SolaceConsumer<>(
+                "cmb", queue, new String[0], SolaceConsumer.MessagingMode.PERSISTENT, true,
+                SolaceConsumer.AckMode.MANUAL, String.class, handler, cm, serializer)
+                .withLocalBackoff(3, 0, 1.0, 0);
+        c.start();
+        return c;
+    }
+
+    @Test
+    void manual_ack_retries_then_acks() {
+        AtomicInteger calls = new AtomicInteger();
+        SolaceConsumer<String> c = persistentManualBackoff("q.mretry", (msg, in, ack) -> {
+            if (calls.incrementAndGet() < 2) throw new RuntimeException("transient");
+            ack.ack();
+        });
+
+        c.onMessage(inbound());
+
+        assertThat(calls.get()).isEqualTo(2);            // failed once, succeeded on retry
+        assertThat(CURRENT.ackCount.get()).isEqualTo(1);
+        assertThat(CURRENT.settleCount.get()).isZero();
+    }
+
+    @Test
+    void manual_ack_exhausts_retries_then_settles() {
+        AtomicInteger calls = new AtomicInteger();
+        SolaceConsumer<String> c = persistentManualBackoff("q.mfail", (msg, in, ack) -> {
+            calls.incrementAndGet();
+            throw new RuntimeException("always fails");
+        });
+
+        c.onMessage(inbound());
+
+        assertThat(calls.get()).isEqualTo(3);            // exhausted localMaxAttempts
+        assertThat(CURRENT.settleCount.get()).isEqualTo(1); // negatively settled after exhaustion
+        assertThat(CURRENT.ackCount.get()).isZero();
+    }
+
+    @Test
+    void manual_ack_completed_then_throw_during_backoff_is_processed() {
+        AtomicInteger calls = new AtomicInteger();
+        SolaceConsumer<String> c = persistentManualBackoff("q.mack", (msg, in, ack) -> {
+            calls.incrementAndGet();
+            ack.ack();
+            throw new RuntimeException("after-ack"); // completed -> loop returns true, no retry
+        });
+
+        c.onMessage(inbound());
+
+        assertThat(calls.get()).isEqualTo(1);            // no retry after completion
+        assertThat(CURRENT.ackCount.get()).isEqualTo(1);
+        assertThat(CURRENT.settleCount.get()).isZero();
+    }
+
     @Test
     void manual_handler_doing_nothing_neither_acks_nor_settles() {
         // Handler returns without ack()/fail(): processed=true, status NONE -> warn, no settle.

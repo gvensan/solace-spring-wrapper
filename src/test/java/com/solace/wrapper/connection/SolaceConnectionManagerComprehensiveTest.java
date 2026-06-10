@@ -407,6 +407,8 @@ public class SolaceConnectionManagerComprehensiveTest {
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
         ConcurrentHashMap<Integer, MessagingService> results = new ConcurrentHashMap<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> threadError =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
         for (int i = 0; i < threadCount; i++) {
             final int idx = i;
@@ -414,8 +416,8 @@ public class SolaceConnectionManagerComprehensiveTest {
                 try {
                     startLatch.await();
                     results.put(idx, cm.getPrimaryService());
-                } catch (Exception e) {
-                    // ignore
+                } catch (Throwable t) {
+                    threadError.compareAndSet(null, t); // surface failures instead of swallowing them
                 } finally {
                     doneLatch.countDown();
                 }
@@ -423,7 +425,11 @@ public class SolaceConnectionManagerComprehensiveTest {
         }
 
         startLatch.countDown(); // Release all threads
-        doneLatch.await(5, TimeUnit.SECONDS);
+        // Deterministic: require all threads to finish (no silent timeout) and no thread error.
+        assertThat(doneLatch.await(30, TimeUnit.SECONDS))
+                .as("all worker threads should complete").isTrue();
+        assertThat(threadError.get()).as("no worker thread should fail").isNull();
+        assertThat(results).as("every thread recorded a result").hasSize(threadCount);
 
         // All threads should get the same instance
         MessagingService expected = results.get(0);
@@ -449,6 +455,8 @@ public class SolaceConnectionManagerComprehensiveTest {
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
         ConcurrentHashMap<Integer, MessagingService> results = new ConcurrentHashMap<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> threadError =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
         for (int i = 0; i < threadCount; i++) {
             final int idx = i;
@@ -456,8 +464,8 @@ public class SolaceConnectionManagerComprehensiveTest {
                 try {
                     startLatch.await();
                     results.put(idx, cm.createConsumerService("consumer-" + idx));
-                } catch (Exception e) {
-                    // ignore
+                } catch (Throwable t) {
+                    threadError.compareAndSet(null, t);
                 } finally {
                     doneLatch.countDown();
                 }
@@ -465,7 +473,10 @@ public class SolaceConnectionManagerComprehensiveTest {
         }
 
         startLatch.countDown();
-        doneLatch.await(5, TimeUnit.SECONDS);
+        assertThat(doneLatch.await(30, TimeUnit.SECONDS))
+                .as("all worker threads should complete").isTrue();
+        assertThat(threadError.get()).as("no worker thread should fail").isNull();
+        assertThat(results).as("every thread recorded a result").hasSize(threadCount);
 
         // All services should be different (isolated)
         for (int i = 0; i < threadCount; i++) {
