@@ -2,8 +2,11 @@ package com.solace.wrapper.annotation;
 
 import com.solace.wrapper.annotation.processor.SolaceConsumerProcessor;
 import com.solace.wrapper.annotation.processor.SolacePublishAspect;
+import com.solace.wrapper.annotation.processor.SolaceReplierProcessor;
+import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.consumer.SolaceConsumerManager;
 import com.solace.wrapper.publisher.SolacePublisher;
+import com.solace.wrapper.serialization.MessageSerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -29,6 +32,8 @@ public class EnableSolaceAnnotationsTest {
         // Provide lightweight mocks to satisfy autowiring without invoking Solace connections
         @Bean SolacePublisher solacePublisher() { return mock(SolacePublisher.class); }
         @Bean SolaceConsumerManager solaceConsumerManager() { return mock(SolaceConsumerManager.class); }
+        @Bean SolaceConnectionManager solaceConnectionManager() { return mock(SolaceConnectionManager.class); }
+        @Bean MessageSerializer messageSerializer() { return mock(MessageSerializer.class); }
     }
 
     @Test
@@ -71,6 +76,9 @@ public class EnableSolaceAnnotationsTest {
             String[] processorBeans = ctx.getBeanNamesForType(SolaceConsumerProcessor.class);
             assertThat(processorBeans).isNotEmpty();
             log.info("        Found SolaceConsumerProcessor beans: " + String.join(", ", processorBeans));
+
+            log.info("STEP 4: Verifying SolaceReplierProcessor bean is registered");
+            assertThat(ctx.getBeanNamesForType(SolaceReplierProcessor.class)).isNotEmpty();
 
             log.info("\n───────────────────────────────────────────────────────────────\n" +
                     "RESULT:\n" +

@@ -2,6 +2,7 @@ package com.solace.wrapper.config;
 
 import com.solace.wrapper.annotation.processor.SolaceConsumerProcessor;
 import com.solace.wrapper.annotation.processor.SolacePublishAspect;
+import com.solace.wrapper.annotation.processor.SolaceReplierProcessor;
 import com.solace.wrapper.annotation.processor.SpelExpressionResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,5 +28,10 @@ public class SolaceAnnotationConfiguration {
     @Bean
     public SolaceConsumerProcessor solaceConsumerProcessor() {
         return new SolaceConsumerProcessor();
+    }
+
+    @Bean
+    public SolaceReplierProcessor solaceReplierProcessor() {
+        return new SolaceReplierProcessor();
     }
 }

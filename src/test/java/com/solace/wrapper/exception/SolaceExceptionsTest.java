@@ -33,4 +33,11 @@ class SolaceExceptionsTest {
         Throwable cause = new RuntimeException("r");
         assertThat(new SolacePublishException("p2", cause)).hasMessage("p2").hasCause(cause);
     }
+
+    @Test
+    void replier_exception_constructors() {
+        assertThat(new SolaceReplierException("rp")).hasMessage("rp").hasNoCause();
+        Throwable cause = new RuntimeException("r");
+        assertThat(new SolaceReplierException("rp2", cause)).hasMessage("rp2").hasCause(cause);
+    }
 }
