@@ -40,4 +40,19 @@ class SolaceExceptionsTest {
         Throwable cause = new RuntimeException("r");
         assertThat(new SolaceReplierException("rp2", cause)).hasMessage("rp2").hasCause(cause);
     }
+
+    @Test
+    void request_exception_constructors() {
+        assertThat(new SolaceRequestException("rq")).hasMessage("rq").hasNoCause();
+        Throwable cause = new RuntimeException("r");
+        assertThat(new SolaceRequestException("rq2", cause)).hasMessage("rq2").hasCause(cause);
+    }
+
+    @Test
+    void request_timeout_exception_constructors_and_hierarchy() {
+        SolaceRequestTimeoutException t1 = new SolaceRequestTimeoutException("to");
+        assertThat(t1).hasMessage("to").hasNoCause().isInstanceOf(SolaceRequestException.class);
+        Throwable cause = new RuntimeException("r");
+        assertThat(new SolaceRequestTimeoutException("to2", cause)).hasMessage("to2").hasCause(cause);
+    }
 }

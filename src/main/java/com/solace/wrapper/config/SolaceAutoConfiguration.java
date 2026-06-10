@@ -4,6 +4,7 @@ import com.solace.wrapper.connection.SolaceConnectionManager;
 import com.solace.wrapper.publisher.SolacePublisher;
 import com.solace.wrapper.consumer.SolaceConsumerManager;
 import com.solace.wrapper.metrics.SolaceMetrics;
+import com.solace.wrapper.requestreply.SolaceRequestor;
 import com.solace.wrapper.serialization.MessageSerializer;
 import com.solace.wrapper.serialization.JsonMessageSerializer;
 import org.springframework.beans.factory.ObjectProvider;
@@ -17,7 +18,7 @@ import org.springframework.context.annotation.Import;
  * Auto-configuration class for Solace Spring Boot integration.
  */
 @Configuration
-@EnableConfigurationProperties(SolaceProperties.class)
+@EnableConfigurationProperties({SolaceProperties.class, SolaceRequestReplyProperties.class})
 @Import(SolaceAnnotationConfiguration.class)
 public class SolaceAutoConfiguration {
 
@@ -51,6 +52,15 @@ public class SolaceAutoConfiguration {
         SolaceConsumerManager manager = new SolaceConsumerManager(connectionManager, messageSerializer);
         manager.setMetrics(metricsProvider.getIfAvailable());
         return manager;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SolaceRequestor solaceRequestor(SolaceConnectionManager connectionManager,
+                                           MessageSerializer messageSerializer,
+                                           SolaceRequestReplyProperties requestReplyProperties) {
+        return new SolaceRequestor(connectionManager, messageSerializer,
+                requestReplyProperties.getDefaultTimeoutMs());
     }
 
     /**
