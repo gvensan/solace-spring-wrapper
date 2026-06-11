@@ -162,6 +162,34 @@ class SolaceReplierProcessorTest {
                 .isInstanceOf(com.solace.wrapper.exception.SolaceReplierException.class);
     }
 
+    static class EdgeBeans {
+        @SolaceReplier(topic = "rr/static")
+        public static String staticMethod(String r) { return "s"; }   // static -> skipped
+
+        @SolaceReplier(topic = "")
+        public String emptyTopic(String r) { return "e"; }            // empty topic -> skipped
+
+        @SolaceReplier(topic = "rr/badtype", replierId = "bad", messageType = "no.such.Class")
+        public String badType(String r) { return "b"; }               // bad type -> falls back to inference
+
+        @SolaceReplier(topic = "rr/inbound", replierId = "inb")
+        public String inboundOnly(com.solace.messaging.receiver.InboundMessage m) { return "i"; } // -> String default
+    }
+
+    @Test
+    void edge_cases_static_empty_topic_bad_type_and_inbound_only() {
+        processor.postProcessAfterInitialization(new EdgeBeans(), "edge");
+
+        // static and empty-topic methods are not registered.
+        assertThat(processor.getEndpoints().stream().anyMatch(e -> "rr/static".equals(e.getTopic()))).isFalse();
+        assertThat(processor.getEndpoints().stream().anyMatch(e -> e.getReplierId().equals("emptyTopic"))).isFalse();
+
+        // bad messageType falls back to parameter inference (String).
+        assertThat(processor.getEndpoint("bad").getRequestType()).isEqualTo(String.class);
+        // InboundMessage-only method infers the String default request type.
+        assertThat(processor.getEndpoint("inb").getRequestType()).isEqualTo(String.class);
+    }
+
     @Test
     void shutdown_clears_repliers() {
         processor.postProcessAfterInitialization(new Beans(), "beans");
