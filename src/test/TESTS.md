@@ -28,6 +28,25 @@ This document summarizes the test coverage for the Solace Spring Wrapper. Each e
 - `broker/HealthIndicatorBrokerIT` (profile `broker-it`): Health indicator live check against a real broker connection.
 - `broker/PersistentMessagingBrokerIT` (profile `broker-it`): Persistent queue scenarios (manual ack, broker redelivery) against a real broker.
 
+### Request-reply
+- `requestreply/SolaceReplierEndpointTest`: `@SolaceReplier` receiver wiring — return value sent as reply, void/null = no reply, handler exception = no reply, InboundMessage injection, start/stop/shutdown, not-connected failure, WAIT/REJECT backpressure, shareName, reply-failure-listener metric, success/no_reply/failure reply outcomes.
+- `requestreply/SolaceRequestorTest`: Blocking + async requests, timeout vs error mapping, default-timeout overloads, **publisher reinit + retry-once on recoverable failure** (no reinit on timeout), async sync-failure retry and callback-evict, publisher caching + shutdown.
+- `annotation/SolaceReplierProcessorTest`: `@SolaceReplier` discovery, id/prefix, type inference + messageType override, autoStart handling, **autoStart failure fails fast**, duplicate skip, startAll, shutdown.
+- `config/SolaceRequestReplyConfigTest`: `solace.request-reply` properties + requestor bean factory.
+- `integration/RequestReplyBrokerOptionalIT` (profile `broker-it`): End-to-end round trip (blocking + async) where a `@SolaceReplier` answers a `SolaceRequestor`, plus a no-replier timeout (skips if broker unreachable).
+
+### Coverage-hardening / observability / config
+- `config/SolaceAutoConfigurationTest`: Bean factory methods + `SolaceMetricsGaugeBinder` (connection/active-endpoint gauges; disconnected/absent/disabled paths).
+- `spel/SpelExpressionMatrixTest`: Parameterized SpEL matrix — variables/property chains, quoted-string concat, ternaries, method calls, `between`, array access, `T(...)`, boolean/arithmetic operators, templates.
+- `serialization/JsonMessageSerializerPojoTest` + `JsonMessageSerializerHelpersTest`: POJO serialize paths + Jackson-failure branches; helper accessors; String/POJO deserialize.
+- `consumer/SolaceConsumerOnMessageTest`: `onMessage` outcome branches incl. manual-ack local-backoff retry / exhaust / completed-then-throw.
+- `metrics/*`: publish/consume/request/reply meters (incl. `no_reply` reply outcome), gauges, properties, auto-configuration.
+
+### Conventions & notes
+- Broker-free unit tests use JDK dynamic `Proxy` stubs for the Solace SDK chain (MessagingService → builders → receivers/publishers) and a stub `SolaceConnectionManager` subclass that overrides `initializePrimaryService()`; integration tests use `TestBroker.assumeAvailable()` and read `test-broker.properties`.
+- Concurrency tests must assert the completion latch and surface worker-thread exceptions (do not ignore `await(...)` results) to avoid silent flakiness.
+- Run everything (unit + both IT suites) with `mvn clean verify -Pintegration,broker-it`; the two failsafe executions have distinct ids so they coexist and contribute to one JaCoCo exec.
+
 ## Test matrix
 
 | Test class | Focus / feature area | What is exercised | Expected result | Broker connection? | Notes |
