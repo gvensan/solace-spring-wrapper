@@ -374,16 +374,6 @@ public class SolaceConsumerProcessor implements BeanPostProcessor {
                                  getMethodSignature(method), lastException);
     }
 
-    /**
-     * Computes local backoff sleep in milliseconds using exponential backoff with cap.
-     */
-    @SuppressWarnings("unused")
-    private long computeBackoff(long initialMs, double multiplier, long maxMs, int attemptIndex) {
-        // attemptIndex starts at 0
-        double delay = initialMs * Math.pow(multiplier, attemptIndex);
-        delay = Math.min(delay, maxMs);
-        return (long) delay;
-    }
 
     /**
      * Validates SpEL expressions in the annotation for security.
