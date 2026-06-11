@@ -32,10 +32,13 @@ public class SolaceConnectionManagerComprehensiveTest {
     private SolaceProperties props;
 
     static class TrackingCM extends SolaceConnectionManager {
-        // These fields need special handling due to parent constructor calling initializePrimaryService
-        private AtomicInteger created;
-        private ConcurrentHashMap<String, MessagingService> services;
-        private ConcurrentHashMap<MessagingService, AtomicBoolean> connectionState;
+        // These fields are lazily initialized (the parent constructor runs before subclass field
+        // initializers). They are volatile and ensureInitialized() is synchronized so that, under
+        // concurrent access, all threads share a single instance of each — otherwise the counter
+        // could be created twice and the main thread would read a stale 0 (a flaky failure).
+        private volatile AtomicInteger created;
+        private volatile ConcurrentHashMap<String, MessagingService> services;
+        private volatile ConcurrentHashMap<MessagingService, AtomicBoolean> connectionState;
         volatile String lastClientNameOverride;
         volatile boolean failNextConnection = false;
         private volatile MessagingService mockPrimaryService;
@@ -44,7 +47,7 @@ public class SolaceConnectionManagerComprehensiveTest {
             super(p);
         }
 
-        private void ensureInitialized() {
+        private synchronized void ensureInitialized() {
             if (created == null) {
                 created = new AtomicInteger();
             }
