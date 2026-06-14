@@ -1,27 +1,43 @@
 package com.example.myapp;
 
-import com.example.myapp.service.AnnotationBasedOrderService;
+import com.example.myapp.model.QuoteResponse;
+import com.example.myapp.observability.OrderMetrics;
+import com.example.myapp.order.OrderService;
+import com.example.myapp.pricing.QuoteClient;
+import com.example.myapp.programmatic.ProgrammaticOrderGateway;
 import com.solace.wrapper.annotation.EnableSolaceAnnotations;
+import com.solace.wrapper.consumer.SolaceConsumerManager;
+import com.solace.wrapper.metrics.SolaceMetrics;
+import io.micrometer.core.instrument.Meter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
- * Example Spring Boot application demonstrating the Solace Spring Wrapper.
+ * Example Spring Boot app for the Solace Spring Wrapper, modelled as a single end-to-end
+ * <strong>order-fulfillment pipeline</strong>:
  *
- * This is a minimal runnable example that shows:
- * 1. @EnableSolaceAnnotations to enable annotation processing
- * 2. @SolacePublish for automatic message publishing
- * 3. @SolaceConsumer for automatic message consumption
+ * <pre>
+ *   OrderService ──orders/created──▶ InventoryService ──inventory/reserve──▶ (reserve, MANUAL ack)
+ *        │                                   │
+ *        │                                   └──billing/charge──▶ BillingService ──billing/charged──▶ NotificationService
+ *        └──orders/status/*──────────────────────────────────────────────────────────────────────▶ (deferred consumer)
  *
- * To run:
- *   1. Start a Solace broker (docker run -d -p 55555:55555 solace/solace-pubsub-standard)
- *   2. Build the parent wrapper: cd .. && mvn clean install -DskipTests
- *   3. Run this app: mvn spring-boot:run
+ *   QuoteClient ──request/reply──▶ PricingService            (native @SolaceReplier + SolaceRequestor)
+ *   ProgrammaticOrderGateway                                  (programmatic SolacePublisher / ConsumerManager)
+ * </pre>
+ *
+ * <p>The driver below exercises every supported annotation feature: see the per-service classes for
+ * the attribute-by-attribute walkthrough, and {@code README.md} for the coverage matrix.</p>
+ *
+ * <p>To run: start a broker
+ * ({@code docker run -d -p 55555:55555 -p 8080:8080 solace/solace-pubsub-standard}),
+ * {@code mvn -f .. clean install -DskipTests}, then {@code mvn spring-boot:run}.</p>
  */
 @SpringBootApplication
 @EnableSolaceAnnotations
@@ -33,63 +49,80 @@ public class ExampleApplication {
         SpringApplication.run(ExampleApplication.class, args);
     }
 
-    @Autowired
-    private AnnotationBasedOrderService orderService;
-
     @Bean
-    public CommandLineRunner demo() {
+    public CommandLineRunner demo(OrderService orderService,
+                                  QuoteClient quoteClient,
+                                  ProgrammaticOrderGateway gateway,
+                                  SolaceConsumerManager consumerManager,
+                                  OrderMetrics orderMetrics,
+                                  SolaceMetrics solaceMetrics) {
         return args -> {
-            logger.info("\n" +
-                "═══════════════════════════════════════════════════════════════\n" +
-                "  SOLACE SPRING WRAPPER - EXAMPLE APPLICATION\n" +
-                "═══════════════════════════════════════════════════════════════\n" +
-                "  This demo shows @SolacePublish and @SolaceConsumer in action.\n" +
-                "  Messages are automatically published/consumed via annotations.\n" +
-                "═══════════════════════════════════════════════════════════════\n");
+            banner("SOLACE SPRING WRAPPER — ORDER FULFILLMENT DEMO");
 
-            // Give consumers time to start
+            // Let annotation consumers connect and subscribe.
             Thread.sleep(2000);
 
-            logger.info("Creating orders...");
+            // The status-notification consumer is autoStart=false; activate it on demand.
+            logger.info("Starting deferred consumers (autoStart=false) ...");
+            consumerManager.startAllConsumers();
 
-            // Create a standard order - automatically published to "orders/created"
-            AnnotationBasedOrderService.OrderMessage order1 = orderService.createOrder(
-                "customer-123", "product-456", 150.0, "STANDARD"
-            );
-            logger.info("Created order: {}", order1.getOrderId());
+            // 1) Drive the pipeline with a standard and a VIP order.
+            banner("1) Annotation pipeline: create orders");
+            var standard = orderService.createOrder("cust-001", "WIDGET-A", 2, 49.98, "STANDARD");
+            var vip = orderService.createOrder("cust-002", "WIDGET-B", 1, 2500.00, "VIP");
 
-            // Create a VIP order - automatically published to "orders/created"
-            AnnotationBasedOrderService.OrderMessage order2 = orderService.createOrder(
-                "customer-789", "product-101", 2500.0, "VIP"
-            );
-            logger.info("Created VIP order: {}", order2.getOrderId());
+            Thread.sleep(2000); // allow inventory -> billing -> notification to flow
 
-            // Send orders to processing - routes to vip/standard queues based on type
-            logger.info("Sending orders to processing...");
-            orderService.sendToProcessing(order1);
-            orderService.sendToProcessing(order2);
+            // 2) Emit a couple of status transitions (eliding-eligible "ticks").
+            banner("2) Status transitions");
+            orderService.changeStatus(standard.orderId, "CREATED", "PACKED");
+            orderService.changeStatus(standard.orderId, "PACKED", "SHIPPED");
 
-            // Wait a bit for messages to process
-            Thread.sleep(3000);
+            // 3) Native request-reply for live pricing (sync + async).
+            banner("3) Request-reply pricing");
+            QuoteResponse syncQuote = quoteClient.getQuote("WIDGET-C", 5, "STANDARD");
+            logger.info("Sync quote total: {} {}", syncQuote.totalPrice, syncQuote.currency);
+            CompletableFuture<QuoteResponse> asyncQuote = quoteClient.getQuoteAsync("WIDGET-C", 5, "VIP");
+            asyncQuote.join();
 
-            // Update order status
-            logger.info("Updating order status...");
-            orderService.updateOrderStatus(order1.getOrderId(), "CREATED", "SHIPPED");
+            // 4) Conditional publish: one cancel with a reason (publishes), one without (suppressed).
+            banner("4) Conditional cancellation");
+            orderService.cancelOrder(vip.orderId, "customer changed their mind"); // publishes
+            orderService.cancelOrder(standard.orderId, "");                       // suppressed by condition
 
-            // Bulk update
-            orderService.updateMultipleOrders(
-                new String[]{order1.getOrderId(), order2.getOrderId()},
-                "DELIVERED"
-            );
+            // 5) Programmatic API alternative.
+            banner("5) Programmatic gateway");
+            gateway.notifyCustomer("cust-001", "EMAIL", "Your order has shipped");
+            gateway.notifyCustomerAsync("cust-002", "SMS", "VIP order update");
 
-            logger.info("\n" +
-                "═══════════════════════════════════════════════════════════════\n" +
-                "  DEMO COMPLETE\n" +
-                "═══════════════════════════════════════════════════════════════\n" +
-                "  Check logs above for message publish/consume activity.\n" +
-                "  The app will keep running to receive messages.\n" +
-                "  Press Ctrl+C to stop.\n" +
-                "═══════════════════════════════════════════════════════════════\n");
+            Thread.sleep(2000);
+
+            // 6) Observability snapshot.
+            banner("6) Metrics snapshot (also at /actuator/prometheus)");
+            logger.info("SolaceMetrics enabled: {}", solaceMetrics.isEnabled());
+            logger.info("Orders in flight (custom gauge): {}", orderMetrics.ordersInFlight());
+            dumpMeters(solaceMetrics);
+
+            banner("DEMO COMPLETE — app stays up to keep consuming. Ctrl+C to stop.");
         };
+    }
+
+    private static void dumpMeters(SolaceMetrics metrics) {
+        if (!metrics.isEnabled()) {
+            return;
+        }
+        for (Meter meter : metrics.getRegistry().getMeters()) {
+            String name = meter.getId().getName();
+            if (name.startsWith("solace.") || name.startsWith("example.")) {
+                meter.measure().forEach(m ->
+                        logger.info("  {} [{}] {} = {}", name, meter.getId().getTags(),
+                                m.getStatistic(), m.getValue()));
+            }
+        }
+    }
+
+    private static void banner(String text) {
+        logger.info("\n═══════════════════════════════════════════════════════════════\n  {}\n" +
+                "═══════════════════════════════════════════════════════════════", text);
     }
 }

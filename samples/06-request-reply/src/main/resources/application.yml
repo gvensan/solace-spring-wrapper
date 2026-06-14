@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: sample-request-reply
+
+solace:
+  host: ${SOLACE_HOST:tcp://localhost:55554}
+  msg-vpn: default
+  client-username: default
+  client-password: default
+  # Unique per app so samples can run concurrently (Solace requires unique client names).
+  client-name: ${spring.application.name}
+
+logging:
+  level:
+    com.solace.wrapper: INFO
+    com.example.samples: DEBUG
+    com.solacesystems: WARN

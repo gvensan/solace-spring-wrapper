@@ -1,39 +1,47 @@
-# Example Usage
+# Example Usage — Order Fulfillment Pipeline
 
-This folder demonstrates usage of the Solace Spring Wrapper with both annotation-based and programmatic approaches.
+This module is a single, cohesive Spring Boot application that demonstrates **every supported feature**
+of the Solace Spring Wrapper in the context of one realistic use case: an **e-commerce order
+fulfillment pipeline**.
+
+```
+OrderService ──orders/created──▶ InventoryService ──inventory/reserve──▶ (reserve, MANUAL ack + backoff)
+     │                                   │
+     │                                   └──billing/charge──▶ BillingService ──billing/charged──▶ NotificationService
+     └──orders/status/*───────────────────────────────────────────────────────────────────────▶ (deferred consumer)
+
+QuoteClient ──request/reply──▶ PricingService     (native @SolaceReplier + SolaceRequestor)
+ProgrammaticOrderGateway                          (programmatic SolacePublisher / SolaceConsumerManager)
+```
 
 ## Project Structure
 
 ```
-example-usage/
-├── pom.xml                          # Maven build file
-├── README.md                        # This file
-└── src/main/
-    ├── java/com/example/myapp/
-    │   ├── ExampleApplication.java           # Spring Boot entry point
-    │   ├── service/
-    │   │   ├── AnnotationBasedOrderService.java  # Annotation-based examples (active)
-    │   │   └── ProgrammaticExampleService.java   # Programmatic API examples (active)
-    │   └── workflow/
-    │       └── ExpandedOrderWorkflow.java        # Advanced multi-service workflow (reference)
-    └── resources/
-        └── application.yml           # Solace connection settings
+example-usage/src/main/java/com/example/myapp/
+├── ExampleApplication.java            # @EnableSolaceAnnotations + CommandLineRunner driver
+├── model/                             # Shared Jackson POJO events/DTOs
+├── order/OrderService.java           # @SolacePublish — create / cancel / status (full attribute surface)
+├── inventory/InventoryService.java   # @SolaceConsumer DIRECT + persistent MANUAL-ack, chained publish
+├── billing/BillingService.java       # @SolaceConsumer persistent queue + broker retries, chained publish
+├── notifications/NotificationService.java  # @SolaceConsumer condition filter + wildcard + autoStart=false
+├── pricing/PricingService.java       # @SolaceReplier  (native request-reply server)
+├── pricing/QuoteClient.java          # SolaceRequestor (native request-reply client, sync + async)
+├── observability/OrderMetrics.java   # SolaceMetrics + custom business meters
+└── programmatic/ProgrammaticOrderGateway.java  # Programmatic API alternative (namespaced)
 ```
 
 ## Running the Example
 
 ### Prerequisites
-
-1. **Java 18+** installed
-2. **Solace Broker** running locally. Start one with Docker:
+1. **Java 17+**
+2. A **Solace broker** running locally:
    ```bash
    docker run -d -p 55555:55555 -p 8080:8080 --name solace solace/solace-pubsub-standard
    ```
 
-### Steps to Run
-
+### Steps
 ```bash
-# 1. Build and install the parent wrapper (from project root)
+# 1. Build & install the parent wrapper (from the project root)
 cd /path/to/solace-spring-wrapper
 mvn clean install -DskipTests
 
@@ -42,101 +50,105 @@ cd example-usage
 mvn spring-boot:run
 ```
 
-### What You'll See
+The driver walks through six stages (create orders → status ticks → request-reply pricing →
+conditional cancellation → programmatic gateway → metrics snapshot). Watch the logs for
+`@SolacePublish` / `@SolaceConsumer` / `@SolaceReplier` activity, then scrape metrics at
+`http://localhost:8081/actuator/prometheus`.
 
-The demo will:
-1. Create orders (published to `orders/created`)
-2. Route orders to processing (VIP vs standard queues)
-3. Update order status (conditional publishing)
-4. Process bulk updates
+## Feature Coverage Matrix
 
-Watch the logs for `@SolacePublish` and `@SolaceConsumer` activity.
+Every annotation feature is exercised by runnable code. The table maps each feature to where it lives.
 
-## Example Files
+### `@SolacePublish`
+| Attribute | Demonstrated in |
+|-----------|-----------------|
+| `destination` (static + SpEL) | all publishers; `orders/status/#{#orderId}` in `OrderService.changeStatus` |
+| `async` | `OrderService.createOrder` |
+| `correlationId` | every publisher |
+| `replyTo` | (native request-reply is preferred — see `@SolaceReplier`/`SolaceRequestor`) |
+| `condition` | `OrderService.cancelOrder` (named-param `#reason`) |
+| `userProperties` (SpEL) | `OrderService.createOrder`, `BillingService.charge` |
+| `deliveryMode` (static + SpEL) | `InventoryService` (PERSISTENT); `OrderService.createOrder` (dynamic by tier) |
+| `clientName` | `OrderService.createOrder` |
+| `applicationMessageId` | `OrderService.createOrder` |
+| `applicationMessageType` | `OrderService.createOrder` |
+| `classOfService` | `OrderService.createOrder` (`VIP ? 2 : 1`) |
+| `priority` (static) | `OrderService.changeStatus` |
+| `timeToLive` (static) | `OrderService.changeStatus` |
+| `elidingEligible` | `OrderService.changeStatus` |
+| `messageExpiration` | `OrderService.changeStatus` |
+| `sequenceNumber` | `OrderService.changeStatus` |
 
-### AnnotationBasedOrderService.java (Active)
-Demonstrates annotation-based Solace integration:
-- `@SolacePublish` for declarative publishing with SpEL expressions
-- `@SolaceConsumer` for declarative queue/topic consumption
-- Dynamic routing with SpEL (`#{result.orderType == 'VIP' ? 'vip' : 'standard'}`)
-- Conditional publishing (`condition = "#{#p2 != #p1}"`)
-- User properties from SpEL (`userProperties = {"orderType=#{result.orderType}"}`)
+### `@SolaceConsumer`
+| Attribute | Demonstrated in |
+|-----------|-----------------|
+| `queue` + `topics` | `InventoryService.reserve`, `BillingService.charge`, `NotificationService.onCharged` |
+| `mode = DIRECT` | `InventoryService.onOrderCreated`, `NotificationService.onStatusChange` |
+| `mode = PERSISTENT` (explicit) | `InventoryService.reserve`, `BillingService.charge` |
+| `ackMode = MANUAL` (`SolaceAckContext`) | `InventoryService.reserve` |
+| `ackMode = AUTO` (explicit) | `BillingService.charge` |
+| `autoCreateQueue` | `InventoryService.reserve` |
+| `condition` (SpEL on `message`) | `NotificationService.onCharged` |
+| topic **wildcards** | `NotificationService.onStatusChange` (`orders/status/*`) |
+| `consumerId` / `consumerIdPrefix` | all consumers |
+| `clientName` | `BillingService.charge` |
+| `messageType` (explicit FQN) | `BillingService.charge` |
+| `autoStart = false` (+ manual start) | `NotificationService.onStatusChange` (started via `SolaceConsumerManager`) |
+| `maxRetries` / `retryDelay` (broker redelivery) | `BillingService.charge` |
+| `localMaxAttempts` / `localBackoff*` | `InventoryService.reserve` |
+| chained `@SolaceConsumer` + `@SolacePublish` | `InventoryService`, `BillingService` |
+| `InboundMessage` parameter | `InventoryService.reserve` |
 
-### ProgrammaticExampleService.java (Active)
-Demonstrates programmatic API usage:
-- `SolacePublisher` for direct publishing control
-- `SolaceConsumerManager.createConsumer()` for runtime consumer creation
-- `MessageProperties` for custom message headers
-- Consumer lifecycle management (`start/stop/remove`)
-- Async publishing with `CompletableFuture`
+### `@SolaceReplier` + `SolaceRequestor` (native request-reply)
+| Feature | Demonstrated in |
+|---------|-----------------|
+| `@SolaceReplier` `topic`, `shareName`, `backpressure`, `backpressureCapacity` | `PricingService.quote` |
+| `SolaceRequestor.request(...)` (sync, with timeout) | `QuoteClient.getQuote` |
+| `SolaceRequestor.requestAsync(...)` (CompletableFuture) | `QuoteClient.getQuoteAsync` |
 
-### ExpandedOrderWorkflow.java (Reference Only)
-Advanced multi-service workflow showing:
-- Chained `@SolaceConsumer` + `@SolacePublish` for message transformation
-- Manual ack with `SolaceAckContext`
-- DIRECT mode consumers (topic subscription without queue)
-- Request-reply pattern with dynamic `replyTo`
-- Local retry with exponential backoff
+### Observability
+| Feature | Demonstrated in |
+|---------|-----------------|
+| Auto-configured `SolaceMetrics` (publish/consume/request/reply meters) | enabled via `spring-boot-starter-actuator` |
+| Custom business meters + live gauge | `OrderMetrics` (`example.orders.*`, `example.notifications.*`) |
+| Prometheus scrape endpoint | `/actuator/prometheus` |
 
-**Note:** The services in this file have `@Service` commented out to avoid conflicts. Uncomment to activate.
+### Programmatic API
+| Feature | Demonstrated in |
+|---------|-----------------|
+| `SolacePublisher.publishToTopic` / persistent + `MessageProperties` / async | `ProgrammaticOrderGateway` |
+| `SolaceConsumerManager.createConsumer` + lifecycle cleanup | `ProgrammaticOrderGateway` |
 
-## Configuration
+## SpEL Reference
 
-Edit `src/main/resources/application.yml` to change:
-- `solace.host` - Broker address (default: `tcp://localhost:55555`)
-- `solace.msg-vpn` - Message VPN (default: `default`)
-- `solace.client-username` / `solace.client-password` - Credentials
-
-## Annotation Quick Reference
-
-### @SolacePublish Attributes
-| Attribute | Type | SpEL | Notes |
-|-----------|------|------|-------|
-| destination | String | Yes | Dynamic topic routing (required) |
-| correlationId | String | Yes | Message correlation |
-| replyTo | String | Yes | Request-reply pattern |
-| condition | String | Yes | Conditional publishing |
-| userProperties | String[] | Yes | Custom headers as `key=value` pairs |
-| deliveryMode | String | Yes | `DIRECT` or `PERSISTENT` |
-| clientName | String | Yes | Override publisher connection name |
-| applicationMessageType | String | Yes | Application-defined message type |
-| applicationMessageId | String | Yes | Application-defined message ID |
-| elidingEligible | String | Yes | Boolean - message eligible for eliding |
-| classOfService | String | Yes | Integer 0-3 for priority classes |
-| messageExpiration | String | Yes | Long - absolute expiration timestamp |
-| sequenceNumber | String | Yes | Long - message sequence number |
-| priority | int | No | Static 0-255 message priority |
-| timeToLive | long | No | Static TTL in ms (-1 for none) |
-| async | boolean | No | Non-blocking publish |
-
-### @SolaceConsumer Attributes
-| Attribute | Type | Notes |
-|-----------|------|-------|
-| queue | String | Queue name for persistent messaging |
-| topics | String[] | Topic subscriptions (supports wildcards) |
-| mode | MessagingMode | AUTO, PERSISTENT, or DIRECT |
-| ackMode | AckMode | AUTO or MANUAL |
-| condition | String | SpEL filter expression |
-| autoCreateQueue | boolean | Auto-create queue if missing (default: true) |
-| consumerId | String | Custom consumer ID |
-| consumerIdPrefix | String | Prefix for generated consumer ID |
-| clientName | String | Override consumer connection name |
-| messageType | String | Expected message type class name |
-| autoStart | boolean | Start on application startup (default: true) |
-| maxRetries | int | Retry attempts for failed messages (default: 3) |
-| retryDelay | long | Delay between retries in ms (default: 1000) |
-| localMaxAttempts | int | Local retry attempts (default: 1) |
-| localBackoffInitialMs | long | Initial backoff delay (default: 200) |
-| localBackoffMultiplier | double | Exponential backoff multiplier (default: 2.0) |
-| localBackoffMaxMs | long | Maximum backoff cap in ms (default: 2000) |
-
-## SpEL Expression Variables
+**Publish attributes** use Spring's **template** syntax — wrap expressions in `#{ ... }`:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `result` | Method return value | `#{result.orderId}` |
-| `#p0`, `#p1`, ... | Parameters by index | `#{#p0}` (first param) |
-| `#paramName` | Parameter by name | `#{#orderId}` (requires `-parameters`) |
-| `T(ClassName)` | Static methods/fields | `#{T(System).currentTimeMillis()}` |
+| `#p0`, `#p1`, … | Parameters by index | `#{#p0.orderId}` |
+| `#paramName` | Parameter by name (needs `-parameters`, enabled in this pom) | `#{#orderId}` |
+| `T(Class)` | Static method/field access | `#{T(System).currentTimeMillis()}` |
 
-Use `result` when accessing return value fields (most common). Use `#p0`/`#p1` when you need input parameter values.
+**Consumer `condition`** is evaluated as a **raw** SpEL expression — **no** `#{ ... }` wrapper. The
+deserialized payload is the root object (and the `#message` variable); the raw message is
+`#originalMessage`:
+
+| Form | Example |
+|------|---------|
+| Root-object property | `status == 'CHARGED'` |
+| `#message` variable | `#message.status == 'CHARGED' or #message.status == 'DECLINED'` |
+| Raw message access | `#originalMessage.getProperty('orderType') == 'VIP'` |
+
+> ⚠️ A common gotcha: using publish-style `#{...}` in a consumer `condition` throws a SpEL parse
+> error (`EL1043E`). Keep consumer conditions unwrapped.
+
+> ℹ️ `classOfService` must evaluate to **0–2** (the Solace client rejects higher values; the publisher
+> logs a warning and drops the property rather than failing the publish).
+
+## Configuration
+Edit `src/main/resources/application.yml`:
+- `solace.host` — broker address (default `tcp://localhost:55555`)
+- `solace.msg-vpn` / `solace.client-username` / `solace.client-password` — connection + credentials
+- `solace.metrics.enabled` — toggle wrapper metrics (default `true`)
+- `management.endpoints.web.exposure.include` — actuator endpoints exposed
