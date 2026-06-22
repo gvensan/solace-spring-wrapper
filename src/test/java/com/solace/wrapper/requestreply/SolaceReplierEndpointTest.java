@@ -29,9 +29,11 @@ class SolaceReplierEndpointTest {
     /** Captures the request handler and reply invocations from the stubbed SDK chain. */
     static class Env {
         volatile Object capturedHandler;            // RequestReplyMessageReceiver.RequestMessageHandler
+        volatile Object capturedFailureListener;    // RequestReplyMessageReceiver.ReplyFailureListener
         final AtomicInteger replyCount = new AtomicInteger();
         final AtomicInteger terminateCount = new AtomicInteger();
         volatile boolean connected = true;
+        volatile boolean terminateThrows = false;
 
         MessagingService service() {
             return (MessagingService) Proxy.newProxyInstance(getClass().getClassLoader(),
@@ -71,8 +73,11 @@ class SolaceReplierEndpointTest {
                     new Class[]{RequestReplyMessageReceiver.class}, (p, m, a) -> {
                         switch (m.getName()) {
                             case "receiveAsync": capturedHandler = a[0]; return null;
-                            case "terminate": terminateCount.incrementAndGet(); return null;
-                            case "setReplyFailureListener":
+                            case "terminate":
+                                terminateCount.incrementAndGet();
+                                if (terminateThrows) throw new RuntimeException("terminate failed");
+                                return null;
+                            case "setReplyFailureListener": capturedFailureListener = a[0]; return null;
                             case "start":
                             default: return null;
                         }
@@ -305,6 +310,33 @@ class SolaceReplierEndpointTest {
         deliverRequest();
         assertThat(registry.find("solace.reply.total").tag("outcome", "no_reply").counter().count())
                 .isEqualTo(1.0);
+    }
+
+    @Test
+    void reply_failure_listener_records_failure_metric() throws Exception {
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        SolaceReplierEndpoint ep = endpoint("echo", String.class);
+        ep.withMetrics(new com.solace.wrapper.metrics.SolaceMetrics(registry, true));
+        ep.start();
+
+        assertThat(CURRENT.capturedFailureListener).isNotNull();
+        // Simulate a broker-side reply-delivery failure (null event tolerated by the listener).
+        ((RequestReplyMessageReceiver.ReplyFailureListener) CURRENT.capturedFailureListener)
+                .onFailedReply(null);
+
+        assertThat(registry.find("solace.reply.total").tag("outcome", "failure").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void stop_tolerates_terminate_failure() throws Exception {
+        SolaceReplierEndpoint ep = endpoint("echo", String.class);
+        ep.start();
+        CURRENT.terminateThrows = true;
+        ep.stop(); // must not propagate the terminate failure
+        assertThat(ep.isRunning()).isFalse();
+        assertThat(CURRENT.terminateCount.get()).isEqualTo(1);
     }
 
     @Test

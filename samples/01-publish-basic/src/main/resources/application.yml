@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: sample-publish-basic
+
+# Broker connection. Default matches the local Docker broker; override with SOLACE_HOST if needed.
+# (Standard Docker maps 55555; this repo's local broker maps host port 55554 -> 55555.)
+solace:
+  host: ${SOLACE_HOST:tcp://localhost:55554}
+  msg-vpn: default
+  client-username: default
+  client-password: default
+  # Unique per app so samples can run concurrently (Solace requires unique client names).
+  client-name: ${spring.application.name}
+
+logging:
+  level:
+    com.solace.wrapper: INFO
+    com.example.samples: DEBUG
+    com.solacesystems: WARN

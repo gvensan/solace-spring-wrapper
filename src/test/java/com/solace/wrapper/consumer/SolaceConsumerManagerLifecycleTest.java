@@ -38,6 +38,7 @@ class SolaceConsumerManagerLifecycleTest {
                             case "connect": return p;
                             case "isConnected": return true;
                             case "createPersistentMessageReceiverBuilder": return persistentBuilder();
+                            case "createDirectMessageReceiverBuilder": return directBuilder();
                             default:
                                 if (m.getReturnType().equals(boolean.class)) return false;
                                 if (m.getReturnType().equals(int.class)) return 0;
@@ -52,6 +53,18 @@ class SolaceConsumerManagerLifecycleTest {
                         if ("build".equals(bm.getName())) {
                             return Proxy.newProxyInstance(getClass().getClassLoader(),
                                     new Class[]{com.solace.messaging.receiver.PersistentMessageReceiver.class},
+                                    (rp, rm, ra) -> "isRunning".equals(rm.getName()) ? Boolean.TRUE : null);
+                        }
+                        return bp;
+                    });
+        }
+
+        private Object directBuilder() {
+            return Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class[]{com.solace.messaging.DirectMessageReceiverBuilder.class}, (bp, bm, ba) -> {
+                        if ("build".equals(bm.getName())) {
+                            return Proxy.newProxyInstance(getClass().getClassLoader(),
+                                    new Class[]{com.solace.messaging.receiver.DirectMessageReceiver.class},
                                     (rp, rm, ra) -> "isRunning".equals(rm.getName()) ? Boolean.TRUE : null);
                         }
                         return bp;
@@ -197,5 +210,33 @@ class SolaceConsumerManagerLifecycleTest {
         assertThatThrownBy(() -> manager.createConsumer("dup", "q.y", String.class, (msg, in) -> { }))
                 .isInstanceOf(com.solace.wrapper.exception.SolaceConsumerException.class)
                 .hasMessageContaining("already exists");
+    }
+
+    @Test
+    void auto_mode_with_queue_and_topics_resolves_to_persistent() {
+        manager.createEnhancedConsumerRaw("auto1", "q.both", new String[]{"t/a", "t/b"},
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.AUTO, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class,
+                (com.solace.wrapper.consumer.SolaceMessageHandler<Object>) (msg, in) -> { });
+        assertThat(manager.getConsumerStatus("auto1").getMessagingMode()).isEqualTo("PERSISTENT");
+    }
+
+    @Test
+    void auto_mode_with_neither_queue_nor_topics_is_rejected() {
+        assertThatThrownBy(() -> manager.createEnhancedConsumerRaw("auto2", "", new String[0],
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.AUTO, true,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class,
+                (com.solace.wrapper.consumer.SolaceMessageHandler<Object>) (msg, in) -> { }))
+                .isInstanceOf(com.solace.wrapper.exception.SolaceConsumerException.class);
+        assertThat(manager.hasConsumer("auto2")).isFalse();
+    }
+
+    @Test
+    void explicit_direct_mode_with_topics() {
+        manager.createEnhancedConsumerRaw("direct1", "", new String[]{"t/x"},
+                com.solace.wrapper.annotation.SolaceConsumer.MessagingMode.DIRECT, false,
+                com.solace.wrapper.annotation.SolaceConsumer.AckMode.AUTO, String.class,
+                (com.solace.wrapper.consumer.SolaceMessageHandler<Object>) (msg, in) -> { });
+        assertThat(manager.getConsumerStatus("direct1").getMessagingMode()).isEqualTo("DIRECT");
     }
 }

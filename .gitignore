@@ -32,6 +32,13 @@ work/
 *.pid.lock
 ISSUE.md
 
+# Claude Code (local/runtime — keep personal settings and lock files out of git)
+.claude/settings.local.json
+.claude/*.lock
+.claude/scheduled_tasks.lock
+.claude/memory/
+.claude/projects/
+
 # Custom
 references/
 solace-samples-java/

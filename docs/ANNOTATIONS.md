@@ -5,9 +5,17 @@ This document summarizes the Solace wrapper annotations, their parameters, defau
 ## General notes
 
 - SpEL context variables:
-  - `#param0`, `#param1`, ... for method arguments.
+  - `#param0`, `#param1`, ... for method arguments (also `#p0`/`#p1`, and named parameters such as
+    `#orderId` when compiled with `-parameters`).
   - `#result` for the method return value (only for `@SolacePublish`).
-  - `#message` for the message object in `@SolaceConsumer` conditions.
+  - `#message` for the message object in `@SolaceConsumer` conditions (also the root object), and
+    `#originalMessage` for the raw `InboundMessage`.
+- SpEL syntax differs by annotation:
+  - `@SolacePublish` attributes use **template** syntax — wrap expressions in `#{ ... }`
+    (e.g. `correlationId = "#{result.orderId}"`).
+  - `@SolaceConsumer` `condition` is a **raw** SpEL expression — **no** `#{ ... }` wrapper
+    (e.g. `condition = "#message.status == 'CHARGED'"`). Using `#{...}` there throws a SpEL parse
+    error (`EL1043E`).
 - `@SolacePublish` publishes to topics. For queues, use `SolacePublisher` directly.
 - Queue auto-create requires broker permissions and a client version that supports `MissingResourcesCreationStrategy`.
 - If `solace.isolateConsumers` or `solace.isolatePublishers` is enabled, reconnect retries are forced on for stability.
@@ -121,7 +129,7 @@ Message properties:
 - `applicationMessageId` (String)
 - `userProperties` (String[] of `key=value` pairs)
 - `elidingEligible` (String, SpEL -> boolean)
-- `classOfService` (String, SpEL -> integer 0-3)
+- `classOfService` (String, SpEL -> integer 0-2)
 - `deliveryMode` (String, SpEL -> `DIRECT` or `PERSISTENT`)
 - `messageExpiration` (String, SpEL -> epoch ms)
 - `sequenceNumber` (String, SpEL -> long)

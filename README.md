@@ -348,9 +348,13 @@ the `SolaceMetrics` bean.
 - `docs/ANNOTATIONS.md` lists annotation parameters, defaults, and usage patterns.
 
 ## Examples
-- `example-usage/` shows annotated publishers/consumers.
-- `example-usage/README.md` documents the expanded, multi-service workflow.
-- `solace-samples-java/` contains upstream Solace samples (reference only).
+- `example-usage/` is a runnable Spring Boot app modelling one end-to-end order-fulfillment pipeline
+  (order → inventory → billing → notifications) plus native request-reply pricing, a programmatic
+  gateway, and Prometheus metrics. It exercises every supported annotation feature.
+- `example-usage/README.md` documents the pipeline and a feature → file coverage matrix.
+- `samples/` is a set of small, **single-concept** apps — one per annotation feature (basic publish,
+  SpEL publish, direct consume, queue consume, manual ack, request-reply). Each is self-contained and
+  runnable on its own; see `samples/README.md`.
 
 ## Testing
 - Unit tests: `mvn test`
@@ -367,10 +371,12 @@ the `SolaceMetrics` bean.
 ### Run locally
 - Configure broker settings in `src/test/resources/test-broker.properties` (or your app `application.yml`).
 - Start your broker (e.g., local broker on `tcp://localhost:55554`).
-- Run a demo app:
-  - Annotation demo: enable the `CommandLineRunner` in `example-usage/AnnotationDemoApplication.java` and run the Spring Boot app.
-  - Programmatic demo: see `example-usage/ExampleService.java` for setup/usage patterns.
-- Manual ack usage: see `SolaceAckContext` and the expanded workflow in `example-usage/ExpandedOrderWorkflow.java`.
+- Run the demo app: `cd example-usage && mvn spring-boot:run` (drives the whole pipeline from a
+  `CommandLineRunner` in `example-usage/.../ExampleApplication.java`).
+  - Annotation usage: the `order/`, `inventory/`, `billing/`, and `notifications/` services.
+  - Programmatic usage: `example-usage/.../programmatic/ProgrammaticOrderGateway.java`.
+  - Request-reply: `example-usage/.../pricing/` (`@SolaceReplier` + `SolaceRequestor`).
+- Manual ack usage: see `SolaceAckContext` and `example-usage/.../inventory/InventoryService.java`.
 
 ## Notes and limits
 - Queue auto-create requires broker permissions (endpoint create/modify, topic subscribe).

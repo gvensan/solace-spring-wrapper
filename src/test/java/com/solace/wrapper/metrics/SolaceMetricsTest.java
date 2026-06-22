@@ -207,6 +207,67 @@ class SolaceMetricsTest {
     }
 
     @Test
+    void timePublish_supplier_records_success_and_returns_value() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        String result = metrics.timePublish("DIRECT", "t/x", "c1", () -> "VALUE");
+
+        assertEquals("VALUE", result);
+        assertEquals(1.0, registry.find(SolaceMetrics.PUBLISH_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).counter().count(), 0.0001);
+        assertEquals(1L, registry.find(SolaceMetrics.PUBLISH_TIMER).timer().count());
+    }
+
+    @Test
+    void timePublish_supplier_records_failure_and_rethrows() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () ->
+                metrics.timePublish("DIRECT", "t/x", "c1", () -> { throw new RuntimeException("boom"); }));
+
+        assertEquals(1.0, registry.find(SolaceMetrics.PUBLISH_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_FAILURE).counter().count(), 0.0001);
+    }
+
+    @Test
+    void timePublish_runnable_records_success() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+        java.util.concurrent.atomic.AtomicBoolean ran = new java.util.concurrent.atomic.AtomicBoolean();
+
+        metrics.timePublish("PERSISTENT", "t/y", "c1", () -> ran.set(true));
+
+        assertTrue(ran.get());
+        assertEquals(1L, registry.find(SolaceMetrics.PUBLISH_TIMER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).timer().count());
+    }
+
+    @Test
+    void timePublish_runs_action_without_registry() {
+        SolaceMetrics metrics = new SolaceMetrics(null);
+        assertEquals("R", metrics.timePublish("DIRECT", "t", "c", () -> "R"));
+    }
+
+    @Test
+    void recordConsume_increments_outcome_counter() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+        metrics.recordConsume(true, "q.a", "consumer-1");
+        assertEquals(1.0, registry.find(SolaceMetrics.CONSUME_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).counter().count(), 0.0001);
+    }
+
+    @Test
+    void gauge_reports_nan_when_supplier_returns_null() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+        metrics.registerGauge("solace.test.nan", () -> null);
+        assertTrue(Double.isNaN(registry.get("solace.test.nan").gauge().value()));
+    }
+
+    @Test
     void requestReplyMetricsAreNoopWithoutRegistry() {
         SolaceMetrics metrics = new SolaceMetrics(null);
         metrics.recordRequest(true, false, "rr/x", 1L);
