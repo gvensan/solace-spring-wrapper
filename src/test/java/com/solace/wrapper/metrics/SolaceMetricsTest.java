@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -154,6 +155,63 @@ class SolaceMetricsTest {
         metrics.registerActivePublishersGauge(() -> 1);
         metrics.registerActiveConsumersGauge(() -> 1);
         metrics.registerGauge("solace.test", () -> 1);
+        assertFalse(metrics.isEnabled());
+    }
+
+    @Test
+    void recordsRequestSuccessCounterAndTimer() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordRequest(true, false, "rr/quote", 3_000_000L);
+
+        assertEquals(1.0, registry.find(SolaceMetrics.REQUEST_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).tag("destination", "rr/quote")
+                .counter().count(), 0.0001);
+        assertEquals(1L, registry.find(SolaceMetrics.REQUEST_TIMER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).timer().count());
+        // No timeout counter on success.
+        assertNull(registry.find(SolaceMetrics.REQUEST_TIMEOUT_COUNTER).counter());
+    }
+
+    @Test
+    void recordsRequestTimeoutSeparately() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordRequest(false, true, "rr/quote", 5_000_000L);
+
+        assertEquals(1.0, registry.find(SolaceMetrics.REQUEST_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_FAILURE).counter().count(), 0.0001);
+        assertNotNull(registry.find(SolaceMetrics.REQUEST_TIMEOUT_COUNTER).counter());
+        assertEquals(1.0, registry.find(SolaceMetrics.REQUEST_TIMEOUT_COUNTER).counter().count(), 0.0001);
+    }
+
+    @Test
+    void recordsReplyOutcomes() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        SolaceMetrics metrics = new SolaceMetrics(registry, true);
+
+        metrics.recordReply(SolaceMetrics.OUTCOME_SUCCESS, "rr/quote", "replier-1");
+        metrics.recordReply(SolaceMetrics.OUTCOME_FAILURE, "rr/quote", "replier-1");
+        metrics.recordReply(SolaceMetrics.OUTCOME_NO_REPLY, "rr/quote", "replier-1");
+
+        assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_SUCCESS).tag("replierId", "replier-1")
+                .counter().count(), 0.0001);
+        assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_FAILURE).counter().count(), 0.0001);
+        // Intentional no-reply is tracked distinctly from success and failure.
+        assertEquals(1.0, registry.find(SolaceMetrics.REPLY_COUNTER)
+                .tag("outcome", SolaceMetrics.OUTCOME_NO_REPLY).counter().count(), 0.0001);
+    }
+
+    @Test
+    void requestReplyMetricsAreNoopWithoutRegistry() {
+        SolaceMetrics metrics = new SolaceMetrics(null);
+        metrics.recordRequest(true, false, "rr/x", 1L);
+        metrics.recordRequest(false, true, "rr/x", 1L);
+        metrics.recordReply(SolaceMetrics.OUTCOME_SUCCESS, "rr/x", "r");
         assertFalse(metrics.isEnabled());
     }
 }

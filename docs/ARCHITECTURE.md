@@ -130,6 +130,21 @@ This document describes the high-level architecture of the Solace Java API Sprin
   none exists) and gated by `solace.metrics.enabled`
 - Meters are exposed through Spring Boot Actuator / Prometheus. See [METRICS.md](METRICS.md).
 
+### 7. Request-Reply Layer
+
+#### SolaceReplierProcessor / SolaceReplierEndpoint
+- `BeanPostProcessor` that discovers `@SolaceReplier` methods and creates a `SolaceReplierEndpoint`
+  per method, each owning a native `RequestReplyMessageReceiver`
+- The method's return value is serialized and sent as the reply via the SDK `Replier`
+  (correlation/reply-to handled by the API); void/null or a thrown exception sends no reply
+
+#### SolaceRequestor
+- Programmatic client that caches a `RequestReplyMessagePublisher` off a pooled `MessagingService`
+- Blocking `request(...)` (via `publishAwaitResponse`) and async `requestAsync(...)` (via the
+  `ReplyMessageHandler` callback); timeouts map to `SolaceRequestTimeoutException`
+- Auto-configured bean; both sides are optionally instrumented by `SolaceMetrics`. See
+  [REQUEST-REPLY.md](REQUEST-REPLY.md).
+
 ## Data Flow
 
 ### Publishing Flow
