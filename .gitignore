@@ -42,3 +42,6 @@ ISSUE.md
 # Custom
 references/
 solace-samples-java/
+
+# Internal agent task/loop prompts (kept locally, not part of the published library)
+TASKS/

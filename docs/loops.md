@@ -1,3 +1,9 @@
+# Recorded loop prompts
+
+> Historical record of the self-improving `/loop` prompts used to build this library.
+> The referenced `TASKS/*.md` task files are kept locally only and are no longer tracked
+> in the repository (see `.gitignore`); the paths below are preserved as-is for context.
+
 TASKS/add-metrics.md
 
 Implement everything in TASKS/add-metrics.md. Follow rules in CLAUDE.md. Use TDD where possible. Keep running mvn verify and fixing until all success criteria are satisfied. Stop only when done.
