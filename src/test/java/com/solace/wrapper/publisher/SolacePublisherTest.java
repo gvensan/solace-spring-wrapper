@@ -1021,6 +1021,75 @@ public class SolacePublisherTest {
                 .isEqualTo(1.0);
     }
 
+    @Test
+    void publish_applies_all_message_properties() {
+        log.info("TEST: publish_applies_all_message_properties — exercises applyMessageProperties across every field");
+        MessageProperties props = new MessageProperties()
+                .setCorrelationId("cid")
+                .setReplyTo("reply/t")
+                .setTimeToLive(1000)
+                .setPriority(5)
+                .setApplicationMessageType("order")
+                .setApplicationMessageId("amid")
+                .setElidingEligible(Boolean.TRUE)
+                .setClassOfService(2)
+                .setSenderId("sender")
+                .setSequenceNumber(42L)
+                .setHttpContentType("application/json")
+                .setHttpContentEncoding("gzip")
+                .setDeliveryMode("DIRECT")
+                .setMessageExpiration(9999L)
+                .addUserProperty("k1", "v1")
+                .addUserProperty("k2", 2);
+
+        publisher.publishToTopicWithProperties("t/all-props", "body", props);
+
+        assertThat(env.lastDirectTopic).isEqualTo("t/all-props");
+        assertThat(env.lastAppliedProperties)
+                .containsEntry(com.solace.messaging.config.SolaceProperties.MessageProperties.CORRELATION_ID, "cid")
+                .containsEntry("reply-to", "reply/t")
+                .containsEntry("delivery-mode", "DIRECT")
+                .containsEntry("message-expiration", "9999")
+                .containsEntry("k1", "v1")
+                .containsEntry("k2", "2")
+                .containsKey(com.solace.messaging.config.SolaceProperties.MessageProperties.APPLICATION_MESSAGE_TYPE)
+                .containsKey(com.solace.messaging.config.SolaceProperties.MessageProperties.SENDER_ID);
+    }
+
+    @Test
+    void publish_tolerates_invalid_property_values() {
+        log.info("TEST: publish_tolerates_invalid_property_values — out-of-range priority/cos and bad delivery mode are logged, not fatal");
+        MessageProperties props = new MessageProperties()
+                .setPriority(300)            // invalid (>255)
+                .setClassOfService(7)        // invalid (>2) -> warns but still applied
+                .setDeliveryMode("BOGUS");   // invalid -> warns, not applied
+
+        publisher.publishToTopicWithProperties("t/bad-props", "body", props);
+        assertThat(env.lastDirectTopic).isEqualTo("t/bad-props");
+        // Bad delivery mode is not forwarded.
+        assertThat(env.lastAppliedProperties).doesNotContainKey("delivery-mode");
+    }
+
+    @Test
+    void persistent_publish_applies_persistent_only_properties() {
+        log.info("TEST: persistent_publish_applies_persistent_only_properties — exercises toPersistentExtendedProperties");
+        MessageProperties props = new MessageProperties()
+                .setPersistentTimeToLive(1000L)
+                .setPersistentExpiration(2000L)
+                .setPersistentAckImmediately(Boolean.TRUE)
+                .setPersistentDmqEligible(Boolean.FALSE);
+
+        publisher.publishPersistentToTopicWithProperties("p/persistent-props", "body", props);
+        assertThat(env.lastPersistentTopic).isEqualTo("p/persistent-props");
+    }
+
+    @Test
+    void active_publisher_count_reflects_initialized_publishers() {
+        log.info("TEST: active_publisher_count_reflects_initialized_publishers");
+        publisher.publishPersistentToTopic("p/count", "x");
+        assertThat(publisher.getActivePublisherCount()).isGreaterThanOrEqualTo(1);
+    }
+
     // Note: receipt-listener supported path is not simulated here; we rely on
     // best-effort confirmations (no listener available) to keep test harness simple.
 

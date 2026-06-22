@@ -85,7 +85,9 @@ public @interface SolacePublish {
 
     /**
      * Class of service for message prioritization (SpEL expression).
-     * Should evaluate to integer 0-3 for different priority classes.
+     * Should evaluate to integer 0-2 for different priority classes; the Solace client rejects
+     * values outside this range. If applying the value fails, the publisher logs a warning and
+     * drops this property rather than failing the publish.
      * Supports SpEL expressions for dynamic CoS assignment.
      */
     String classOfService() default "";

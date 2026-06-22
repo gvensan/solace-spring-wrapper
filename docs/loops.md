@@ -16,7 +16,7 @@ TASKS/improve-tests.md
 /loop
 Read TASKS/improve-tests.md and CLAUDE.md thoroughly. 
 Run `mvn clean verify -Pintegration` and analyze coverage + failures. 
-Identify gaps in annotation-driven testing (SpEL, publishers, consumers, lifecycle, edge cases). 
+Identify gaps in annotation-driven testing (SpEL, publishers, consumers, request-reply, lifecycle, use cases in example-usage, edge cases). 
 Add or improve tests to increase coverage and correctness. 
 Re-run tests after changes and fix any issues. 
 Continue looping and self-improving until success criteria are met and coverage is strong.

@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class SolaceRequestorTest {
 
-    enum Mode { SUCCESS, TIMEOUT, ERROR }
+    enum Mode { SUCCESS, TIMEOUT, ERROR, INTERRUPT }
 
     static volatile Env CURRENT;
 
@@ -41,6 +41,11 @@ class SolaceRequestorTest {
         final AtomicInteger terminateCount = new AtomicInteger();
         // When > 0, the next N blocking sends throw a transient (non-timeout) error, then succeed.
         final AtomicInteger transientFailures = new AtomicInteger(0);
+        // When true, the next async publish() call throws synchronously (then resets).
+        final java.util.concurrent.atomic.AtomicBoolean failPublishOnce =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        // When true, every async publish() call throws synchronously (both attempts).
+        volatile boolean failPublishAlways = false;
 
         MessagingService service() {
             return (MessagingService) Proxy.newProxyInstance(getClass().getClassLoader(),
@@ -87,10 +92,14 @@ class SolaceRequestorTest {
                                 }
                                 if (mode == Mode.TIMEOUT) throw timeoutException();
                                 if (mode == Mode.ERROR) throw new RuntimeException("broker error");
+                                if (mode == Mode.INTERRUPT) throw new InterruptedException("interrupted");
                                 return reply();
                             }
                             case "publish": {
                                 // (OutboundMessage, ReplyMessageHandler, Object, Topic, long)
+                                if (failPublishAlways || failPublishOnce.getAndSet(false)) {
+                                    throw new RuntimeException("synchronous publish failure");
+                                }
                                 lastTimeout = (long) a[a.length - 1];
                                 RequestReplyMessagePublisher.ReplyMessageHandler handler =
                                         (RequestReplyMessagePublisher.ReplyMessageHandler) a[1];
@@ -265,6 +274,37 @@ class SolaceRequestorTest {
     }
 
     @Test
+    void interrupted_send_is_wrapped_and_flag_restored() {
+        CURRENT.mode = Mode.INTERRUPT;
+        try {
+            assertThatThrownBy(() -> requestor.request("rr/i", "req", String.class, Duration.ofSeconds(1)))
+                    .isInstanceOf(SolaceRequestException.class)
+                    .isNotInstanceOf(SolaceRequestTimeoutException.class)
+                    .hasMessageContaining("interrupted");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted(); // clear the interrupt flag for subsequent tests
+        }
+    }
+
+    @Test
+    void transient_failure_then_timeout_on_retry_maps_to_timeout() {
+        CURRENT.transientFailures.set(1);  // first attempt: transient error -> reinit + retry
+        CURRENT.mode = Mode.TIMEOUT;       // retry attempt: times out
+        assertThatThrownBy(() -> requestor.request("rr/tr", "req", String.class, Duration.ofMillis(300)))
+                .isInstanceOf(SolaceRequestTimeoutException.class);
+    }
+
+    @Test
+    void async_sync_publish_failure_both_attempts_completes_exceptionally() {
+        CURRENT.failPublishAlways = true; // both the initial publish and the retry throw
+        CompletableFuture<String> f = requestor.requestAsync("rr/a", "req", String.class);
+        assertThatThrownBy(f::join)
+                .hasCauseInstanceOf(SolaceRequestException.class)
+                .hasMessageContaining("after retry");
+    }
+
+    @Test
     void publisher_create_failure_is_wrapped() {
         CURRENT.failBuild = true;
         assertThatThrownBy(() -> requestor.request("rr/x", "req", String.class, Duration.ofSeconds(1)))
@@ -279,6 +319,31 @@ class SolaceRequestorTest {
         assertThatThrownBy(f::join)
                 .hasCauseInstanceOf(SolaceRequestException.class)
                 .hasMessageContaining("deserialize");
+    }
+
+    @Test
+    void async_sync_publish_failure_reinits_and_retries() {
+        CURRENT.failPublishOnce.set(true); // first publish() throws synchronously
+        CompletableFuture<String> f = requestor.requestAsync("rr/a", "req", String.class, Duration.ofSeconds(2));
+        assertThat(f).succeedsWithin(Duration.ofSeconds(1)).isEqualTo("REPLY");
+        assertThat(CURRENT.startCount.get()).isEqualTo(2);     // original + rebuilt
+        assertThat(CURRENT.terminateCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void async_callback_error_evicts_publisher() {
+        CURRENT.mode = Mode.ERROR; // reply callback reports a non-timeout error
+        CompletableFuture<String> f = requestor.requestAsync("rr/a", "req", String.class);
+        assertThatThrownBy(f::join).hasCauseInstanceOf(SolaceRequestException.class);
+        // The broken publisher is evicted so the next call rebuilds it.
+        assertThat(requestor.getActivePublisherCount()).isZero();
+    }
+
+    @Test
+    void async_default_timeout_overload() {
+        CompletableFuture<String> f = requestor.requestAsync("rr/a", "req", String.class);
+        assertThat(f).succeedsWithin(Duration.ofSeconds(1)).isEqualTo("REPLY");
+        assertThat(CURRENT.lastTimeout).isEqualTo(4321L);
     }
 
     @Test
